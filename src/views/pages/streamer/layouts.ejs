@@ -1,0 +1,106 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title><%= title %></title>
+    <link rel="stylesheet" href="/public/css/app.css" />
+  </head>
+  <body>
+    <div class="container">
+
+      <div class="header">
+        <div class="brand">
+          <div class="brand-dot"></div>
+          <div>
+          <%- include('../../partials/streamerHeader', {
+  pageTitle: 'layouts',
+  pageSub: 'Overlay Layouts & Controls',
+  activeTab: 'layouts'
+}) %>
+
+          </div>
+        </div>
+      </div>
+
+      <div class="grid two">
+        <div class="card">
+          <div class="card-title">
+            <h2>Plan</h2>
+            <div class="hint">Stripe + override-aware</div>
+          </div>
+          <div id="plan" class="muted">Loading plan…</div>
+          <div id="status" class="notice" style="display:none; margin-top:10px;"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">
+            <h2>Tip</h2>
+            <div class="hint">Per-streamer customization</div>
+          </div>
+          <div class="notice">
+            You can override a layout’s <span class="mono">defaultConfig</span> per streamer. Use the generated controls for safe edits,
+            or edit JSON directly below. Blank clears override.
+          </div>
+        </div>
+      </div>
+
+      <div class="hr"></div>
+
+      <div class="card">
+        <div class="card-title">
+          <h2>Layouts</h2>
+          <div class="hint">FREE always available • PRO requires upgrade</div>
+        </div>
+        <div id="layouts" class="muted">Loading layouts…</div>
+      </div>
+
+      <div class="hr"></div>
+
+      <div class="grid two">
+        <div class="card">
+          <div class="card-title">
+            <h2>Style Controls</h2>
+            <div class="hint">Generated from style metadata</div>
+          </div>
+          <div id="styleControls" style="max-width: 920px;"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">
+            <h2>Advanced Override JSON</h2>
+            <div class="hint mono">overrideConfig</div>
+          </div>
+          <p class="small">
+            The form on the left writes into this JSON. You can also edit JSON directly.
+          </p>
+
+          <textarea
+            id="overrideJson"
+            name="overrideConfigText"
+            rows="14"
+            placeholder="{ }"
+          ></textarea>
+
+          <div class="small" style="margin-top:10px;">
+            Tip: Use a JSON object. Example: <span class="mono">{"placement":"edges","intensity":0.75}</span>
+          </div>
+        </div>
+      </div>
+
+      <script src="/public/js/streamer/styleControls.js"></script>
+      <script src="/public/js/streamer/layouts.js"></script>
+    </div>
+
+    <script>
+      // tiny UX only: show/hide #status if text is set by JS
+      // (No business logic; your main logic remains in separate JS files)
+      const statusEl = document.getElementById('status');
+      const obs = new MutationObserver(() => {
+        if (!statusEl) return;
+        const has = (statusEl.textContent || '').trim().length > 0;
+        statusEl.style.display = has ? 'block' : 'none';
+      });
+      if (statusEl) obs.observe(statusEl, { childList: true, characterData: true, subtree: true });
+    </script>
+  </body>
+</html>

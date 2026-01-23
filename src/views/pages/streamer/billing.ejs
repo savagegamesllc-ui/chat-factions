@@ -1,0 +1,85 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title><%= title %></title>
+    <link rel="stylesheet" href="/public/css/app.css" />
+  </head>
+  <body>
+    <div class="container">
+
+      <div class="header">
+        <div class="brand">
+          <div class="brand-dot"></div>
+          <%- include('../../partials/streamerHeader', {  pageTitle: 'Billing',  pageSub: 'Manage your FREE/PRO plan and subscription',  activeTab: 'billing'}) %>
+        </div>
+
+        
+      </div>
+
+      <!-- Status bar (JS will toggle visibility; no inline scripts) -->
+      <div id="status" class="notice" style="display:none;"></div>
+
+      <!-- HERO: Plan + Actions -->
+      <div class="grid two" style="align-items:start;">
+        <div class="card" style="padding:18px;">
+          <div class="card-title" style="margin-bottom:10px;">
+            <h2 style="margin:0;">Your plan</h2>
+            <div class="hint">Webhook-driven</div>
+          </div>
+
+          <!-- Populated by billing.js (includes badge + stripe IDs if present) -->
+          <div id="billing" class="muted">Loading billing status…</div>
+
+          <div style="margin-top: 14px; display:flex; gap:10px; flex-wrap:wrap;">
+            <button class="btn primary" id="btnUpgrade" style="min-width: 160px;">
+              Upgrade to PRO
+            </button>
+            <button class="btn" id="btnManage" style="min-width: 180px;">
+              Manage Subscription
+            </button>
+          </div>
+
+          <div class="small muted" style="margin-top: 12px; line-height:1.4;">
+            Stripe webhooks update your plan automatically. If something looks off, refresh after a minute.
+          </div>
+        </div>
+
+        <div class="card" style="padding:18px;">
+          <div class="card-title" style="margin-bottom:10px;">
+            <h2 style="margin:0;">What PRO unlocks</h2>
+            <div class="hint">Layout gating</div>
+          </div>
+
+          <div class="notice">
+            <div style="font-weight:800; margin-bottom:6px;">PRO features</div>
+            <ul style="margin:0; padding-left:18px; line-height:1.6;">
+              <li>Access to all PRO overlay layouts</li>
+              <li>PRO-gated assets (when enabled)</li>
+              <li>PRO layouts render safely in OBS (locked message if downgraded)</li>
+            </ul>
+          </div>
+
+          <div class="notice" style="margin-top:12px;">
+            <div class="small muted">
+              No sudden drop: when a subscription ends, your overlays won’t “break” — they’ll show a safe locked message.
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- OPTIONAL: trust/clarity strip -->
+      <div class="card" style="padding:14px; margin-top:14px;">
+        <div class="row">
+          <div>
+            <div style="font-weight:800;">Need to test PRO gating?</div>
+            <div class="small muted">Select a PRO layout in Layouts. If you’re FREE, OBS shows a safe lock screen.</div>
+          </div>
+          <a class="btn" href="/admin/layouts">Go to Layouts</a>
+        </div>
+      </div>
+
+      <script src="/public/js/streamer/billing.js"></script>
+    </div>
+  </body>
+</html>

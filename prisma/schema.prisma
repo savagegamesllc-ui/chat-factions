@@ -1,0 +1,367 @@
+// prisma/schema.prisma
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum PlanTier {
+  FREE
+  PRO
+}
+
+//
+// ✅ Twitch-authenticated streamer account (dashboard user)
+//
+model Streamer {
+  id           String  @id @default(cuid())
+  twitchUserId String  @unique
+  login        String?
+  displayName  String
+  email        String?
+
+  // Used to generate a stable OBS URL; keep this unique and unguessable.
+  overlayToken String @unique
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  planTier PlanTier @default(FREE)
+
+  // manual override that Stripe webhooks should NOT downgrade
+  proOverride  Boolean   @default(false)
+  proGrantedAt DateTime?
+
+  // Stripe linkage
+  stripeCustomerId     String? @unique
+  stripeSubscriptionId String? @unique
+
+  // relationships
+  factions Faction[]
+  sessions StreamSession[]
+  assets   OverlayAsset[]
+  layouts  StreamerLayout[]
+  views    OverlayView[]
+  viewers  Viewer[]
+
+  // ✅ Opposite relation fields (required by Prisma for these relations)
+  memberships FactionMembership[]
+  eventLogs   EventLog[]
+  voteEvents  VoteEvent[]
+    
+    // Twitch OAuth tokens (for chat connection + refresh)
+  twitchAccessToken     String?
+  twitchRefreshToken    String?
+  twitchTokenExpiresAt  DateTime?
+  twitchScopes          Json?
+  twitchTokenUpdatedAt  DateTime?
+
+    // Streamer-configurable chat command settings
+  chatConfig Json?
+
+  // External event ingestion auth (game triggers, etc.)
+  eventApiKey String? @unique
+  externalReceipts ExternalEventReceipt[]
+
+
+}
+
+//
+// (Optional now, useful later) Viewers per streamer
+//
+model Viewer {
+  id           String   @id @default(cuid())
+  streamerId   String
+  twitchUserId String
+  displayName  String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  streamer    Streamer            @relation(fields: [streamerId], references: [id], onDelete: Cascade)
+  memberships FactionMembership[]
+  events      EventLog[]
+
+  @@unique([streamerId, twitchUserId])
+  @@index([streamerId])
+}
+
+//
+// ✅ Factions are per streamer (2–10 enforced in service)
+// key is unique PER streamer, not globally
+//
+model Faction {
+  id          String   @id @default(cuid())
+  streamerId  String
+  key         String
+  name        String
+  description String?
+  colorHex    String   @default("#78C8FF")
+  sortOrder   Int      @default(0)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  streamer Streamer @relation(fields: [streamerId], references: [id], onDelete: Cascade)
+
+  sessionMeters SessionFactionMeter[]
+  memberships   FactionMembership[]
+  votes         VoteEvent[]
+
+  @@unique([streamerId, key])
+  @@index([streamerId])
+}
+
+model FactionMembership {
+  id         String   @id @default(cuid())
+  streamerId String
+  viewerId   String
+  factionId  String
+  role       String   @default("MEMBER")
+  joinedAt   DateTime @default(now())
+
+  streamer Streamer @relation(fields: [streamerId], references: [id], onDelete: Cascade)
+  viewer   Viewer   @relation(fields: [viewerId], references: [id], onDelete: Cascade)
+  faction  Faction  @relation(fields: [factionId], references: [id], onDelete: Cascade)
+
+  @@unique([viewerId, factionId])
+  @@index([streamerId])
+  @@index([factionId])
+}
+
+//
+// ✅ Stream sessions are per streamer
+//
+model StreamSession {
+  id         String    @id @default(cuid())
+  streamerId String
+  startedAt  DateTime  @default(now())
+  endedAt    DateTime?
+  title      String?
+  createdAt  DateTime  @default(now())
+
+  votingOpen      Boolean  @default(true)
+  votingChangedAt DateTime @default(now())
+
+  streamer Streamer @relation(fields: [streamerId], references: [id], onDelete: Cascade)
+
+  events    EventLog[]
+  meters    SessionFactionMeter[]
+  votes     VoteEvent[]
+  cooldowns VoteCooldown[]
+
+  @@index([streamerId, startedAt])
+  lastDecayAt DateTime?
+}
+
+model EventLog {
+  id         String   @id @default(cuid())
+  streamerId String
+  type       String
+  payload    Json
+  viewerId   String?
+  sessionId  String?
+  createdAt  DateTime @default(now())
+
+  streamer Streamer       @relation(fields: [streamerId], references: [id], onDelete: Cascade)
+  viewer   Viewer?        @relation(fields: [viewerId], references: [id], onDelete: SetNull)
+  session  StreamSession? @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+
+  @@index([streamerId, type, createdAt])
+  @@index([sessionId, createdAt])
+}
+
+model SessionFactionMeter {
+  id        String   @id @default(cuid())
+  sessionId String
+  factionId String
+  meter     Int      @default(0)
+  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now())
+
+  session StreamSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  faction Faction       @relation(fields: [factionId], references: [id], onDelete: Cascade)
+
+  @@unique([sessionId, factionId])
+  @@index([sessionId])
+  @@index([factionId])
+}
+
+model VoteEvent {
+  id         String @id @default(cuid())
+  streamerId String
+  sessionId  String
+  factionId  String
+
+  // redundancy for analytics/debug and to handle faction rename
+  factionKey String
+  userKey    String
+  username   String?
+  source     String   @default("chat")
+  weight     Int      @default(1)
+  createdAt  DateTime @default(now())
+
+  streamer Streamer      @relation(fields: [streamerId], references: [id], onDelete: Cascade)
+  session  StreamSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  faction  Faction       @relation(fields: [factionId], references: [id], onDelete: Cascade)
+
+  @@index([streamerId, createdAt])
+  @@index([sessionId, createdAt])
+  @@index([sessionId, userKey, createdAt])
+  @@index([sessionId, factionKey, createdAt])
+}
+
+model VoteCooldown {
+  id        String   @id @default(cuid())
+  sessionId String
+  action    String
+  userKey   String
+  lastAt    DateTime @default(now())
+
+  session StreamSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@unique([sessionId, action, userKey])
+  @@index([sessionId, action, lastAt])
+}
+
+//
+// ✅ Overlay assets (optional early, fine to keep)
+//
+model OverlayAsset {
+  id         String @id @default(cuid())
+  streamerId String
+  kind       String @default("other")
+
+  filename  String
+  mimeType  String
+  sizeBytes Int
+  urlPath   String
+
+  tier     PlanTier @default(FREE)
+  isActive Boolean  @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  streamer Streamer @relation(fields: [streamerId], references: [id], onDelete: Cascade)
+
+  @@index([streamerId, createdAt])
+  @@index([kind])
+}
+
+//
+// ✅ Session store table (only if you plan to use Prisma session store)
+//
+model DashboardSession {
+  sid       String    @id
+  data      Json
+  expiresAt DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@index([expiresAt])
+}
+
+//
+// ✅ DB-driven overlay layouts (owner-managed)
+//
+model OverlayLayout {
+  id       String   @id @default(cuid())
+  name     String
+  styleKey String
+  tier     PlanTier @default(FREE)
+  isActive Boolean  @default(true)
+
+  defaultConfig Json?
+  metadata      Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  streamers StreamerLayout[]
+  views     OverlayView[]
+
+  @@index([styleKey])
+  @@index([tier, isActive])
+}
+
+//
+// ✅ StreamerLayout join per your spec (RESTORED)
+//
+model StreamerLayout {
+  id          String   @id @default(cuid())
+  streamerId  String
+  layoutId    String
+
+  isEnabled   Boolean  @default(true)
+
+  // Legacy (slot 0) selection flag
+  isSelected  Boolean  @default(false)
+
+  // NEW: which slot this layout is selected for (0..3). null means not selected.
+  selectedSlot Int?
+
+  overrideConfig Json?
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  streamer    Streamer      @relation(fields: [streamerId], references: [id], onDelete: Cascade)
+  layout      OverlayLayout @relation(fields: [layoutId], references: [id], onDelete: Cascade)
+
+  @@unique([streamerId, layoutId])
+  @@index([streamerId])
+  @@index([layoutId])
+
+  // NEW: enforce only one selected layout per slot per streamer (Postgres allows many NULLs)
+  @@unique([streamerId, selectedSlot])
+  @@index([streamerId, selectedSlot])
+}
+
+//
+// ✅ View analytics for overlay loads
+//
+model OverlayView {
+  id         String  @id @default(cuid())
+  streamerId String
+  layoutId   String?
+
+  styleKey String?
+  path     String?
+
+  userAgent String?
+  ipHash    String?
+  createdAt DateTime @default(now())
+
+  streamer Streamer       @relation(fields: [streamerId], references: [id], onDelete: Cascade)
+  layout   OverlayLayout? @relation(fields: [layoutId], references: [id], onDelete: SetNull)
+
+  @@index([streamerId, createdAt])
+  @@index([layoutId, createdAt])
+  @@index([styleKey, createdAt])
+}
+
+model AppErrorLog {
+  id        String   @id @default(cuid())
+  level     String   @default("error") // error|warn|info
+  message   String
+  stack     String?
+  meta      Json?
+  createdAt DateTime @default(now())
+
+  @@index([level, createdAt])
+}
+
+model ExternalEventReceipt {
+  id        String   @id @default(cuid())
+  streamerId String
+  eventId   String
+  createdAt DateTime @default(now())
+
+  streamer  Streamer @relation(fields: [streamerId], references: [id], onDelete: Cascade)
+
+  @@unique([streamerId, eventId])
+  @@index([streamerId, createdAt])
+}

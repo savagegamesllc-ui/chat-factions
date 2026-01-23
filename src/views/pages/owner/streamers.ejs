@@ -1,0 +1,50 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title><%= title %></title>
+    <link rel="stylesheet" href="/public/css/app.css" />
+  </head>
+  <body>
+    <div class="container">
+
+      <div class="header">
+        <div class="brand">
+          <div class="brand-dot"></div>
+          <div>
+            <h1>Owner — Streamers</h1>
+            <div class="sub">Toggle FREE/PRO and proOverride for testing</div>
+          </div>
+        </div>
+
+        <div class="nav">
+          <a href="/owner">Owner Home</a>
+          <a href="/owner/layouts">Layouts</a>
+          <a href="/owner/streamers">Streamers</a>
+          <a href="/admin">Streamer Dashboard</a>
+        </div>
+      </div>
+
+      <div id="status" class="notice" style="display:none;"></div>
+
+      <div class="card">
+        <div class="card-title">
+          <h2>All Streamers</h2>
+          <div class="hint">Owner-only</div>
+        </div>
+
+        <div id="streamers" class="muted">Loading…</div>
+      </div>
+
+      <script src="/public/js/owner/streamers.js"></script>
+      <script>
+        const s = document.getElementById('status');
+        const mo = new MutationObserver(() => {
+          const has = (s.textContent || '').trim().length > 0;
+          s.style.display = has ? 'block' : 'none';
+        });
+        mo.observe(s, { childList: true, subtree: true, characterData: true });
+      </script>
+    </div>
+  </body>
+</html>

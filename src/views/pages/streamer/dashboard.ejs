@@ -1,0 +1,160 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title><%= title %></title>
+    <link rel="stylesheet" href="/public/css/app.css" />
+  </head>
+  <body>
+    <div class="container">
+
+      <div class="header">
+        <div class="brand">
+          <div class="brand-dot"></div>
+          <div>
+            <h1>Streamer Dashboard</h1>
+            <div class="sub">Manage layouts, factions, meters, and billing</div>
+          </div>
+        </div>
+
+        <div class="nav">
+          <a href="/admin/layouts">Layouts</a>
+          <a href="/admin/factions">Factions</a>
+          <a href="/admin/meters">Meters</a>
+          <a href="/admin/chat">Chat</a>
+          <a href="/admin/event-api">Event API</a>
+          <a href="/admin/billing">Billing</a>
+        </div>
+      </div>
+      <div class="card">
+
+      <div class="card-title">
+        <h2>OBS Overlay URL</h2>
+       <div class="hint">Browser Source</div>
+     </div>
+
+      <div class="small muted" style="margin-top:8px;">
+        Paste this into OBS → Sources → Browser
+      </div>
+
+  <div style="margin-top:10px;">
+    <input id="overlayUrl" class="input mono" readonly value="Loading…" />
+  </div>
+
+  <div style="margin-top:12px; display:flex; gap:10px; flex-wrap:wrap;">
+    <button class="btn primary" type="button" id="btnCopyOverlayUrl">Copy URL</button>
+    <a class="btn" href="/admin/layouts">Choose Layout</a>
+  </div>
+</div>
+
+<div class="hr"></div>
+
+              <div class="card">
+                <div class="card-title">
+                  <h2>Overlay Preview</h2>
+                  <div class="hint">Live (same as OBS)</div>
+                </div>
+
+                <div class="small muted" style="margin-top:8px; line-height:1.4;">
+                  This loads your overlay in an iframe using the same URL you paste into OBS.
+                  If your overlay is transparent, you may only see elements once hype changes.
+                </div>
+
+                <div style="margin-top:12px; display:flex; gap:10px; flex-wrap:wrap;">
+                  <button class="btn" type="button" id="btnPreviewRefresh">Refresh</button>
+                  <button class="btn" type="button" id="btnPreviewOpen">Open</button>
+                  <button class="btn" type="button" id="btnPreviewToggle">Hide Preview</button>
+                  <button class="btn" type="button" id="btnPreviewMaxHype">Max Hype</button>
+                </div>
+
+                <div id="previewWrap" style="
+                  margin-top:12px;
+                  border-radius: 16px;
+                  border: 1px solid rgba(255,255,255,0.12);
+                  overflow: hidden;
+                  background:
+                    linear-gradient(45deg, rgba(255,255,255,0.05) 25%, transparent 25%),
+                    linear-gradient(-45deg, rgba(255,255,255,0.05) 25%, transparent 25%),
+                    linear-gradient(45deg, transparent 75%, rgba(255,255,255,0.05) 75%),
+                    linear-gradient(-45deg, transparent 75%, rgba(255,255,255,0.05) 75%);
+                  background-size: 24px 24px;
+                  background-position: 0 0, 0 12px, 12px -12px, -12px 0px;
+                ">
+                  <iframe
+                    id="overlayPreviewFrame"
+                    title="Overlay Preview"
+                    style="display:block; width:100%; height:320px; border:0; background:transparent;"
+                    loading="lazy"
+                    referrerpolicy="no-referrer"
+                  ></iframe>
+                </div>
+
+                <div id="previewNote" class="small muted" style="margin-top:10px;"></div>
+              </div>
+    <div class="hr"></div>
+      <div id="proSlotUrls" style="margin-top:12px; display:none;">
+        <div class="hr"></div>
+        <div class="small muted" style="margin:8px 0;">
+          PRO Slots (use multiple Browser Sources in OBS)
+        </div>
+
+        <div class="grid two">
+          <div>
+            <label class="small">Slot 1</label>
+            <input id="overlayUrl1" class="input mono" readonly />
+          </div>
+          <div>
+            <label class="small">Slot 2</label>
+            <input id="overlayUrl2" class="input mono" readonly />
+          </div>
+        </div>
+
+        <div style="margin-top:10px;">
+          <label class="small">Slot 3</label>
+          <input id="overlayUrl3" class="input mono" readonly />
+        </div>
+
+        <div style="margin-top:12px; display:flex; gap:10px; flex-wrap:wrap;">
+          <button class="btn" type="button" id="btnCopyOverlayUrl1">Copy Slot 1</button>
+          <button class="btn" type="button" id="btnCopyOverlayUrl2">Copy Slot 2</button>
+          <button class="btn" type="button" id="btnCopyOverlayUrl3">Copy Slot 3</button>
+    </div>
+  </div>
+<div class="hr"></div>
+      <div class="grid two">
+        <div class="card">
+          <div class="card-title">
+            <h2>Status</h2>
+            <div class="hint">Session + plan + selected layout</div>
+          </div>
+          <div id="status" class="notice">Loading…</div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">
+            <h2>Quick actions</h2>
+            <div class="hint">Session auth</div>
+          </div>
+          <form method="post" action="/admin/logout" style="margin:0;">
+            <button class="btn danger" type="submit">Log out</button>
+          </form>
+          <div class="small" style="margin-top:10px;">
+            Your session is stored server-side. If something looks stale, log out/in.
+          </div>
+        </div>
+      </div>
+
+      <div class="hr"></div>
+
+      <div class="card">
+        <div class="card-title">
+          <h2>Summary</h2>
+          <div class="hint">Auto-loaded</div>
+        </div>
+        <div id="summary" class="muted">Loading summary…</div>
+      </div>
+
+      <script src="/public/js/streamer/dashboard.js"></script>
+    </div>
+  </body>
+</html>

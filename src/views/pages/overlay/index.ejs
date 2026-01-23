@@ -1,0 +1,19 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Overlay</title>
+    <link rel="stylesheet" href="/public/overlays/overlay.css" />
+  </head>
+
+  <body style="margin:0; overflow:hidden; background:transparent;">
+    <div
+      id="overlayRoot"
+      data-streamer-token="<%= overlayToken %>"
+      data-style-key="<%= styleKey %>"
+      data-config-json="<%= JSON.stringify(config || {}).replace(/</g, "\\u003c") %>"
+    ></div>
+
+    <script type="module" src="/public/overlays/overlayClient.js"></script>
+  </body>
+</html>

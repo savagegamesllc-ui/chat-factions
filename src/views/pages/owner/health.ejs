@@ -1,0 +1,103 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title><%= title %></title>
+    <link rel="stylesheet" href="/public/css/app.css" />
+  </head>
+  <body>
+    <div class="container">
+
+      <div class="header">
+        <div class="brand">
+          <div class="brand-dot"></div>
+          <div>
+            <h1>Owner — System Health</h1>
+            <div class="sub">Quick counts and recent error log</div>
+          </div>
+        </div>
+
+        <div class="nav">
+          <a href="/owner">Owner Home</a>
+          <a href="/owner/layouts">Layouts</a>
+          <a href="/owner/streamers">Streamers</a>
+          <a class="active" href="/owner/health">System Health</a>
+          <a href="/admin">Streamer Dashboard</a>
+        </div>
+      </div>
+
+      <div id="status" class="notice" style="display:none;"></div>
+
+      <div class="grid two">
+        <div class="card">
+          <div class="card-title">
+            <h2>Overview</h2>
+            <div class="hint">Owner-only</div>
+          </div>
+
+          <div class="hr"></div>
+
+          <div class="pills">
+            <span class="pill">Streamers: <strong><%= health.streamerCount %></strong></span>
+            <span class="pill">Layouts (total): <strong><%= health.layoutCount %></strong></span>
+            <span class="pill">Layouts (active): <strong><%= health.activeLayoutCount %></strong></span>
+            <span class="pill">Factions (total): <strong><%= health.factionCount %></strong></span>
+          </div>
+
+          <div class="hr"></div>
+
+          <div class="row" style="justify-content:flex-start;">
+            <a class="btn" href="/owner">Back</a>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">
+            <h2>Recent Errors</h2>
+            <div class="hint">Latest logged entries</div>
+          </div>
+
+          <div class="hr"></div>
+
+          <% if (!health.lastErrors || health.lastErrors.length === 0) { %>
+            <div class="muted">No errors logged.</div>
+          <% } else { %>
+            <table class="table">
+              <thead>
+                <tr>
+                  <th>Time</th>
+                  <th>Level</th>
+                  <th>Message</th>
+                </tr>
+              </thead>
+              <tbody>
+                <% health.lastErrors.forEach(e => { %>
+                  <tr>
+                    <td class="muted"><%= new Date(e.createdAt).toLocaleString() %></td>
+                    <td>
+                      <% const lvl = String(e.level || '').toLowerCase(); %>
+                      <span class="badge <%= (lvl === 'error' || lvl === 'fatal') ? 'pro' : 'free' %>">
+                        <%= e.level %>
+                      </span>
+                    </td>
+                    <td class="mono"><%= e.message %></td>
+                  </tr>
+                <% }) %>
+              </tbody>
+            </table>
+          <% } %>
+        </div>
+      </div>
+
+      <script>
+        const s = document.getElementById('status');
+        const mo = new MutationObserver(() => {
+          const has = (s.textContent || '').trim().length > 0;
+          s.style.display = has ? 'block' : 'none';
+        });
+        mo.observe(s, { childList: true, subtree: true, characterData: true });
+      </script>
+
+    </div>
+  </body>
+</html>

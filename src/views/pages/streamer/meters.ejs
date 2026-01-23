@@ -1,0 +1,83 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title><%= title %></title>
+    <link rel="stylesheet" href="/public/css/app.css" />
+  </head>
+  <body>
+    <div class="container">
+
+      <div class="header">
+        <div class="brand">
+          <div class="brand-dot"></div>
+          <div>
+            <%- include('../../partials/streamerHeader', {
+  pageTitle: 'meters',
+  pageSub: 'Realtime faction hype (SSE)',
+  activeTab: 'meters'
+}) %>
+  
+          </div>
+        </div>
+
+
+      </div>
+
+      <div id="status" class="notice" style="display:none;"></div>
+
+      <div class="grid two">
+        <div class="card">
+          <div class="card-title">
+            <h2>Summary</h2>
+            <div class="hint">Auto-updating</div>
+          </div>
+          <div id="summary" class="muted">Connecting…</div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">
+            <h2>Twitch chat listener</h2>
+            <div class="hint">Start/stop</div>
+          </div>
+          <div style="display:flex; gap:10px; flex-wrap:wrap;">
+            <button class="btn primary" id="btnChatStart">Start Twitch Chat Listener</button>
+            <button class="btn" id="btnChatStop">Stop Twitch Chat Listener</button>
+          </div>
+          <div id="chatStatus" class="small" style="margin-top:10px;"></div>
+        </div>
+      </div>
+
+      <div class="hr"></div>
+
+      <div class="card">
+        <div class="card-title">
+          <h2>Current meters</h2>
+          <div class="hint">Faction totals</div>
+        </div>
+
+        <table class="table">
+          <thead>
+            <tr>
+              <th>Faction</th>
+              <th>Key</th>
+              <th>Meter</th>
+              <th>Color</th>
+            </tr>
+          </thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
+
+      <script src="/public/js/streamer/meters.js"></script>
+      <script>
+        const s = document.getElementById('status');
+        const mo = new MutationObserver(() => {
+          const has = (s.textContent || '').trim().length > 0;
+          s.style.display = has ? 'block' : 'none';
+        });
+        mo.observe(s, { childList: true, subtree: true, characterData: true });
+      </script>
+    </div>
+  </body>
+</html>

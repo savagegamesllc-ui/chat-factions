@@ -1,0 +1,56 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title><%= title %></title>
+    <link rel="stylesheet" href="/public/css/app.css" />
+  </head>
+  <body>
+    <div class="container">
+
+      <%- include('../../partials/streamerHeader', {
+        pageTitle: 'Event API',
+        pageSub: 'Secure game triggers + idempotency',
+        activeTab: 'eventApi'
+      }) %>
+
+      <!-- Status bar (billing/chat/eventApi JS handles visibility via showStatus) -->
+      <div id="status" class="notice" style="display:none;"></div>
+
+      <div class="grid two">
+        <div class="card">
+          <div class="card-title">
+            <h2>API Key</h2>
+            <div class="hint">Keep secret</div>
+          </div>
+
+          <label class="small">Event API Key</label>
+          <input id="key" class="input mono" readonly />
+
+          <div style="margin-top: 12px; display:flex; gap:10px; flex-wrap:wrap;">
+            <button class="btn danger" id="btnRotate">Rotate Key</button>
+          </div>
+
+          <div class="small muted" style="margin-top:10px; line-height:1.4;">
+            Rotating invalidates the old key immediately. Update any game / automation clients right after rotating.
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">
+            <h2>Example</h2>
+            <div class="hint">Copy/paste</div>
+          </div>
+
+          <pre id="example" class="code"></pre>
+
+          <div class="small muted" style="margin-top:10px; line-height:1.4;">
+            Tip: Use unique <span class="mono">eventId</span> values for idempotency.
+          </div>
+        </div>
+      </div>
+
+      <script src="/public/js/streamer/eventApi.js"></script>
+    </div>
+  </body>
+</html>

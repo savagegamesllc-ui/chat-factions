@@ -1,0 +1,21 @@
+# Node
+node_modules/
+npm-debug.log*
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+keys.txt
+
+# Prisma
+prisma/migrations/*
+
+# OS / editor junk
+.DS_Store
+Thumbs.db
+.vscode/
+
+# Logs
+logs/
+*.log

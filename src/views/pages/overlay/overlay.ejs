@@ -1,0 +1,50 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title><%= title || "Overlay" %></title>
+    <link rel="stylesheet" href="/public/overlays/overlay.css" />
+  </head>
+
+  <body style="margin:0; overflow:hidden; background:transparent;">
+    <% if (blockedReason) { %>
+      <!-- PRO GATED OVERLAY (no JS, OBS-safe) -->
+      <div style="
+        position:fixed; inset:0;
+        display:flex; align-items:center; justify-content:center;
+        font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+        ">
+        <div style="
+          max-width: 720px;
+          padding: 18px 20px;
+          border-radius: 14px;
+          background: rgba(0,0,0,0.55);
+          color: #fff;
+          box-shadow: 0 10px 30px rgba(0,0,0,0.35);
+          ">
+          <div style="font-size: 18px; font-weight: 800; margin-bottom: 8px;">
+            PRO overlay locked
+          </div>
+
+          <div style="font-size: 13px; opacity: 0.9; line-height: 1.4;">
+            <%= blockedReason %>
+          </div>
+
+          <div style="margin-top: 12px; font-size: 12px; opacity: 0.85;">
+            Open your Streamer Dashboard → Billing to upgrade.
+          </div>
+        </div>
+      </div>
+    <% } else { %>
+      <!-- NORMAL OVERLAY -->
+      <div
+        id="overlayRoot"
+        data-streamer-token="<%= overlayToken %>"
+        data-style-key="<%= styleKey %>"
+        data-config-json="<%= (effectiveConfigJson || "{}").replace(/</g, "\\u003c") %>"
+      ></div>
+
+      <script type="module" src="/public/overlays/overlayClient.js"></script>
+    <% } %>
+  </body>
+</html>

@@ -1,0 +1,45 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title><%= title %></title>
+    <link rel="stylesheet" href="/public/css/app.css" />
+  </head>
+  <body>
+    <div class="container" style="max-width: 760px;">
+
+      <div class="header">
+        <div class="brand">
+          <div class="brand-dot"></div>
+          <div>
+            <h1>Streamer Login</h1>
+            <div class="sub">Sign in with Twitch to access your dashboard</div>
+          </div>
+        </div>
+        <div class="nav">
+          <a href="/">Home</a>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">
+          <h2>Continue with Twitch</h2>
+          <div class="hint">OAuth</div>
+        </div>
+
+        <% if (error) { %>
+          <div class="notice error" style="margin-bottom: 12px;"><%= error %></div>
+        <% } %>
+
+        <a class="btn primary" href="/admin/auth/twitch" style="display:inline-flex;">
+          Log in with Twitch
+        </a>
+
+        <div class="small" style="margin-top: 12px;">
+          We store only a session id in your browser (cookie-based session).
+        </div>
+      </div>
+
+    </div>
+  </body>
+</html>

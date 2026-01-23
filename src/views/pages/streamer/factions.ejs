@@ -1,0 +1,90 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title><%= title %></title>
+    <link rel="stylesheet" href="/public/css/app.css" />
+  </head>
+  <body>
+    <div class="container">
+
+      <div class="header">
+        <div class="brand">
+          <div class="brand-dot"></div>
+          <div>
+            <%- include('../../partials/streamerHeader', {  pageTitle: 'factions',  pageSub: '2–10 factions per streamer • names, colors, order',  activeTab: 'factions'}) %>
+            
+          </div>
+        </div>
+
+
+      </div>
+
+      <div id="status" class="notice" style="display:none;"></div>
+
+      <div class="grid two">
+        <div class="card">
+          <div class="card-title">
+            <h2>Existing Factions</h2>
+            <div class="hint">Edit in place</div>
+          </div>
+          <div id="factions" class="muted">Loading factions…</div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">
+            <h2>Add Faction</h2>
+            <div class="hint">Key must be unique</div>
+          </div>
+
+          <form id="createForm">
+            <div style="margin-bottom: 10px;">
+              <label class="small">Key (e.g. ORDER)</label>
+              <input class="input" name="key" type="text" maxlength="24" placeholder="ORDER" />
+            </div>
+
+            <div style="margin-bottom: 10px;">
+              <label class="small">Name</label>
+              <input class="input" name="name" type="text" placeholder="The Order" />
+            </div>
+
+            <div style="margin-bottom: 10px;">
+              <label class="small">Color Hex (#RRGGBB)</label>
+              <input class="input" name="colorHex" type="text" value="#78C8FF" />
+            </div>
+
+            <div style="margin-bottom: 10px;">
+              <label class="small">Sort Order</label>
+              <input class="input" name="sortOrder" type="number" value="0" />
+            </div>
+
+            <div style="margin-bottom: 10px;">
+              <label class="small">Description</label>
+              <input class="input" name="description" type="text" placeholder="Optional" />
+            </div>
+
+            <div style="margin-bottom: 12px;">
+              <label class="small">
+                <input name="isActive" type="checkbox" checked />
+                Active
+              </label>
+            </div>
+
+            <button class="btn primary" type="submit">Create</button>
+          </form>
+        </div>
+      </div>
+
+      <script src="/public/js/streamer/factions.js"></script>
+      <script>
+        // purely UX: auto-show status if text is present
+        const s = document.getElementById('status');
+        const mo = new MutationObserver(() => {
+          const has = (s.textContent || '').trim().length > 0;
+          s.style.display = has ? 'block' : 'none';
+        });
+        mo.observe(s, { childList: true, subtree: true, characterData: true });
+      </script>
+    </div>
+  </body>
+</html>

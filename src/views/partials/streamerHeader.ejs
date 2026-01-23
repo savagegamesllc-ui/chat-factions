@@ -1,0 +1,20 @@
+<!-- src/views/partials/streamerHeader.ejs -->
+<div class="header">
+  <div class="brand">
+    <div class="brand-dot"></div>
+    <div>
+      <h1><%= pageTitle || title || "Streamer Dashboard" %></h1>
+      <div class="sub"><%= pageSub || "Configure your overlays and factions" %></div>
+    </div>
+  </div>
+
+  <div class="nav">
+    <a href="/admin" class="<%= activeTab === 'dashboard' ? 'active' : '' %>">Dashboard</a>
+    <a href="/admin/layouts" class="<%= activeTab === 'layouts' ? 'active' : '' %>">Layouts</a>
+    <a href="/admin/factions" class="<%= activeTab === 'factions' ? 'active' : '' %>">Factions</a>
+    <a href="/admin/meters" class="<%= activeTab === 'meters' ? 'active' : '' %>">Meters</a>
+    <a href="/admin/billing" class="<%= activeTab === 'billing' ? 'active' : '' %>">Billing</a>
+    <a href="/admin/chat" class="<%= activeTab === 'chat' ? 'active' : '' %>">Chat</a>
+    <a href="/admin/eventApi" class="<%= activeTab === 'eventApi' ? 'active' : '' %>">Event API</a>
+  </div>
+</div>

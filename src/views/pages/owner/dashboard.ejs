@@ -1,0 +1,87 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title><%= title %></title>
+    <link rel="stylesheet" href="/public/css/app.css" />
+  </head>
+  <body>
+    <div class="container">
+
+      <div class="header">
+        <div class="brand">
+          <div class="brand-dot"></div>
+          <div>
+            <h1>Owner — Dashboard</h1>
+            <div class="sub">Quick access to owner-only tools</div>
+          </div>
+        </div>
+
+        <div class="nav">
+          <a class="active" href="/owner">Owner Home</a>
+          <a href="/owner/layouts">Layouts</a>
+          <a href="/owner/streamers">Streamers</a>
+          <a href="/owner/health">System Health</a>
+          <a href="/admin">Streamer Dashboard</a>
+        </div>
+      </div>
+
+      <div id="status" class="notice" style="display:none;"></div>
+
+      <div class="grid two">
+        <div class="card">
+          <div class="card-title">
+            <h2>Owner Tools</h2>
+            <div class="hint">Owner-only</div>
+          </div>
+
+          <div class="hr"></div>
+
+          <div class="pills">
+            <a class="pill" href="/owner/layouts">Manage Overlay Layouts</a>
+            <a class="pill" href="/owner/streamers">View Streamers</a>
+            <a class="pill" href="/owner/health">System Health</a>
+          </div>
+
+          <div class="hr"></div>
+
+          <div class="row" style="justify-content:flex-start;">
+            <form method="post" action="/owner/logout">
+              <button class="btn danger" type="submit">Log Out</button>
+            </form>
+            <a class="btn" href="/">Home</a>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">
+            <h2>Stats</h2>
+            <div class="hint">At a glance</div>
+          </div>
+
+          <div class="hr"></div>
+
+          <div class="pills">
+            <span class="pill">Total layouts: <strong><%= layoutCount %></strong></span>
+          </div>
+
+          <div class="hr"></div>
+
+          <div class="muted small">
+            (Next: owner system health + streamer list.)
+          </div>
+        </div>
+      </div>
+
+      <script>
+        const s = document.getElementById('status');
+        const mo = new MutationObserver(() => {
+          const has = (s.textContent || '').trim().length > 0;
+          s.style.display = has ? 'block' : 'none';
+        });
+        mo.observe(s, { childList: true, subtree: true, characterData: true });
+      </script>
+
+    </div>
+  </body>
+</html>
