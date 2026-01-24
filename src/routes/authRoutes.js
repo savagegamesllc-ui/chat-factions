@@ -6,10 +6,7 @@ const express = require('express');
 const {
   randomToken,
   buildTwitchAuthorizeUrl,
-  exchangeCodeForToken,
-  fetchTwitchUser,
-  upsertStreamerFromTwitchUser,
-  saveTwitchTokensForStreamer, // ✅ NEW
+  handleOAuthCallback, // ✅ NEW: single entrypoint (code -> tokens -> helix -> upsert)
 } = require('../services/twitchAuthService');
 
 function authRoutes() {
@@ -21,9 +18,9 @@ function authRoutes() {
 
   // This is where requireStreamer redirects if not logged in (locked contract)
   router.get('/admin/login', (req, res) => {
-    if (req.session && req.session.streamerId) return res.redirect('/admin');
+    if (req.session && req.session.streamerId) return res.redirect('/admin/dashboard');
 
-    res.render('pages/streamer/login', {
+    return res.render('pages/streamer/login', {
       title: 'Streamer Login',
       error: null,
     });
@@ -38,7 +35,7 @@ function authRoutes() {
       const url = buildTwitchAuthorizeUrl(state);
       return res.redirect(url);
     } catch (err) {
-      next(err);
+      return next(err);
     }
   });
 
@@ -71,24 +68,27 @@ function authRoutes() {
         });
       }
 
-      // 1) Exchange code for token
-      const tokenJson = await exchangeCodeForToken(String(code));
+      // ✅ Single atomic flow:
+      // - exchange code -> token bundle
+      // - helix /users -> twitch user
+      // - upsert streamer
+      // - persist tokens on streamer row
+      const result = await handleOAuthCallback(String(code));
+      const streamer = result?.streamer;
 
-      // 2) Fetch Twitch user (Helix)
-      const twitchUser = await fetchTwitchUser(tokenJson.access_token);
-
-      // 3) Upsert streamer
-      const streamer = await upsertStreamerFromTwitchUser(twitchUser);
-
-      // ✅ 4) Persist tokens on Streamer row (needed for chat listener)
-      await saveTwitchTokensForStreamer(streamer.id, tokenJson);
+      if (!streamer?.id) {
+        return res.status(500).render('pages/streamer/login', {
+          title: 'Streamer Login',
+          error: 'Login succeeded but streamer record could not be created.',
+        });
+      }
 
       // ✅ Locked contract: store ONE session key
       req.session.streamerId = streamer.id;
 
-      return res.redirect('/admin');
+      return res.redirect('/admin/dashboard');
     } catch (err) {
-      next(err);
+      return next(err);
     }
   });
 
@@ -101,7 +101,7 @@ function authRoutes() {
     return res.redirect('/admin/login');
   });
 
-  // (Keep your generic logout if you want, but streamer contract uses /admin/logout)
+  // Keep your generic logout if you want
   router.post('/logout', (req, res) => {
     req.session.destroy(() => {
       res.redirect('/');
