@@ -7,7 +7,7 @@ const { getValidAccessToken } = require('./twitchTokenService');
 const { getEffectiveChatConfig } = require('./chatConfigService');
 const { getOrCreateActiveSession } = require('./sessionService');
 const { checkAndTouchCooldown } = require('./cooldownService');
-const { addHype, getMetersSnapshot } = require('./metersService');
+const { addHype, getMetersSnapshot } = require('./meterService');
 const { broadcast } = require('./realtimeHub');
 
 const clients = new Map(); // streamerId -> { client, channel }
