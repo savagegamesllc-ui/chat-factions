@@ -5,98 +5,71 @@ const crypto = require('crypto');
 const { prisma } = require('../db/prisma');
 const { config } = require('../config/env');
 
-function assertTwitchEnv() {
-  if (!config.twitchClientId) throw new Error('TWITCH_CLIENT_ID is missing in .env');
-  if (!config.twitchClientSecret) throw new Error('TWITCH_CLIENT_SECRET is missing in .env');
-  if (!config.twitchRedirectUri) throw new Error('TWITCH_REDIRECT_URI is missing in .env');
+// Node 18+ has fetch; otherwise use node-fetch.
+let fetchFn = global.fetch;
+async function getFetch() {
+  if (fetchFn) return fetchFn;
+  const mod = await import('node-fetch');
+  fetchFn = mod.default;
+  return fetchFn;
 }
 
-function randomToken(bytes = 24) {
-  return crypto.randomBytes(bytes).toString('hex');
+function assertEnv() {
+  if (!config.twitchClientId) throw new Error('TWITCH_CLIENT_ID missing');
+  if (!config.twitchClientSecret) throw new Error('TWITCH_CLIENT_SECRET missing');
+  if (!config.twitchRedirectUri) throw new Error('TWITCH_REDIRECT_URI missing');
 }
 
-/**
- * Build Twitch authorize URL.
- * We store a CSRF state token in the session and verify it on callback.
- */
-function buildTwitchAuthorizeUrl(state) {
-  assertTwitchEnv();
-
-  const params = new URLSearchParams({
-    response_type: 'code',
-    client_id: config.twitchClientId,
-    redirect_uri: config.twitchRedirectUri,
-
-    // NOTE:
-    // This scope is enough to fetch user identity/email.
-    // If later you want more Twitch API actions, expand scopes here.
-    scope: 'user:read:email',
-
-    state,
-  });
-
-  return `https://id.twitch.tv/oauth2/authorize?${params.toString()}`;
+function normalizeScopes(scope) {
+  if (!scope) return [];
+  if (Array.isArray(scope)) return scope.map(String).filter(Boolean);
+  return String(scope)
+    .split(/\s+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
 }
 
-/**
- * Exchange code for an access token.
- */
-async function exchangeCodeForToken(code) {
-  assertTwitchEnv();
+function computeExpiresAt(expiresInSeconds) {
+  const n = Number(expiresInSeconds || 0);
+  if (!n) return null;
+  return new Date(Date.now() + n * 1000);
+}
 
-  const params = new URLSearchParams({
-    client_id: config.twitchClientId,
-    client_secret: config.twitchClientSecret,
-    code,
-    grant_type: 'authorization_code',
-    redirect_uri: config.twitchRedirectUri,
-  });
-
-  const resp = await fetch('https://id.twitch.tv/oauth2/token', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: params,
-  });
-
-  if (!resp.ok) {
-    const text = await resp.text().catch(() => '');
-    throw new Error(`Twitch token exchange failed (${resp.status}): ${text}`);
-  }
-
-  // { access_token, refresh_token, expires_in, token_type, scope? }
-  return resp.json();
+function newOverlayToken() {
+  // stable unguessable token for OBS URL
+  return crypto.randomBytes(24).toString('hex');
 }
 
 /**
- * Fetch Twitch user via Helix.
+ * Fetch Twitch user from Helix using access token.
+ * Returns { twitchUserId, login, displayName, email }
  */
 async function fetchTwitchUser(accessToken) {
-  assertTwitchEnv();
+  const fetch = await getFetch();
 
   const resp = await fetch('https://api.twitch.tv/helix/users', {
+    method: 'GET',
     headers: {
+      'Client-Id': String(config.twitchClientId),
       Authorization: `Bearer ${accessToken}`,
-      'Client-Id': config.twitchClientId,
     },
   });
 
+  const json = await resp.json().catch(() => ({}));
+
   if (!resp.ok) {
-    const text = await resp.text().catch(() => '');
-    throw new Error(`Twitch user fetch failed (${resp.status}): ${text}`);
+    const msg = json?.message || json?.error || resp.statusText || `HTTP ${resp.status}`;
+    throw new Error(`Helix /users failed: ${msg}`);
   }
 
-  const json = await resp.json();
-  const user = json && json.data && json.data[0];
-
-  if (!user || !user.id) throw new Error('Twitch user fetch returned no user.');
+  const u = Array.isArray(json?.data) ? json.data[0] : null;
+  if (!u?.id) throw new Error('Helix /users returned no user');
 
   return {
-    twitchUserId: String(user.id),
-    login: user.login ? String(user.login) : null,
-    displayName: user.display_name
-      ? String(user.display_name)
-      : (user.login ? String(user.login) : 'Streamer'),
-    email: user.email ? String(user.email) : null,
+    twitchUserId: String(u.id),
+    login: u.login ? String(u.login) : null,
+    displayName: u.display_name ? String(u.display_name) : (u.login ? String(u.login) : 'Unknown'),
+    email: u.email ? String(u.email) : null,
   };
 }
 
@@ -104,11 +77,22 @@ async function fetchTwitchUser(accessToken) {
  * Upsert Streamer row based on Twitch user id.
  * - overlayToken is created once and preserved
  * - planTier defaults to FREE via schema
+ * - also stores OAuth tokens on the streamer row
  */
-async function upsertStreamerFromTwitchUser(twitchUser) {
+async function upsertStreamerFromTwitchUser(twitchUser, tokenBundle) {
   const existing = await prisma.streamer.findUnique({
     where: { twitchUserId: twitchUser.twitchUserId },
   });
+
+  const tokenData = tokenBundle
+    ? {
+        twitchAccessToken: tokenBundle.accessToken || null,
+        twitchRefreshToken: tokenBundle.refreshToken || null,
+        twitchTokenExpiresAt: tokenBundle.expiresAt || null,
+        twitchScopes: tokenBundle.scopes || [],
+        twitchTokenUpdatedAt: new Date(),
+      }
+    : {};
 
   if (existing) {
     return prisma.streamer.update({
@@ -117,6 +101,7 @@ async function upsertStreamerFromTwitchUser(twitchUser) {
         login: twitchUser.login,
         displayName: twitchUser.displayName,
         email: twitchUser.email,
+        ...tokenData,
       },
     });
   }
@@ -127,50 +112,72 @@ async function upsertStreamerFromTwitchUser(twitchUser) {
       login: twitchUser.login,
       displayName: twitchUser.displayName,
       email: twitchUser.email,
-      overlayToken: randomToken(24),
+      overlayToken: newOverlayToken(),
+      ...tokenData,
     },
   });
 }
 
 /**
- * ✅ Persist Twitch tokens onto Streamer (matches your schema.prisma fields)
- * Required for Twitch chat listener.
+ * Exchange OAuth code for tokens
  */
-async function saveTwitchTokensForStreamer(streamerId, tokenJson) {
-  if (!streamerId) throw new Error('saveTwitchTokensForStreamer: missing streamerId');
-  if (!tokenJson || !tokenJson.access_token) {
-    throw new Error('saveTwitchTokensForStreamer: missing access_token');
-  }
+async function exchangeCodeForToken(code) {
+  assertEnv();
+  const fetch = await getFetch();
 
-  const expiresIn = Number(tokenJson.expires_in || 0);
-  const twitchTokenExpiresAt = expiresIn
-    ? new Date(Date.now() + expiresIn * 1000)
-    : null;
-
-  // Twitch scope sometimes arrives as array; sometimes as a string
-  const scopes =
-    Array.isArray(tokenJson.scope) ? tokenJson.scope
-    : (tokenJson.scope ? String(tokenJson.scope).split(' ').filter(Boolean) : []);
-
-  await prisma.streamer.update({
-    where: { id: streamerId },
-    data: {
-      twitchAccessToken: String(tokenJson.access_token),
-      twitchRefreshToken: tokenJson.refresh_token ? String(tokenJson.refresh_token) : null,
-      twitchTokenExpiresAt,
-      twitchScopes: scopes, // Json column in your schema
-      twitchTokenUpdatedAt: new Date(),
-    },
+  const body = new URLSearchParams({
+    client_id: String(config.twitchClientId),
+    client_secret: String(config.twitchClientSecret),
+    code: String(code),
+    grant_type: 'authorization_code',
+    redirect_uri: String(config.twitchRedirectUri),
   });
 
-  return { ok: true };
+  const resp = await fetch('https://id.twitch.tv/oauth2/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body,
+  });
+
+  const json = await resp.json().catch(() => ({}));
+
+  if (!resp.ok) {
+    const msg =
+      json?.error_description ||
+      json?.message ||
+      json?.error ||
+      resp.statusText ||
+      `HTTP ${resp.status}`;
+    throw new Error(`Twitch token exchange failed: ${msg}`);
+  }
+
+  const accessToken = json?.access_token ? String(json.access_token) : null;
+  if (!accessToken) throw new Error('Token exchange succeeded but no access_token returned');
+
+  return {
+    accessToken,
+    refreshToken: json?.refresh_token ? String(json.refresh_token) : null,
+    expiresAt: computeExpiresAt(json?.expires_in),
+    scopes: normalizeScopes(json?.scope),
+  };
+}
+
+async function handleOAuthCallback(code) {
+  // 1) Exchange code -> tokens
+  const tokenBundle = await exchangeCodeForToken(code);
+
+  // 2) Fetch user from Helix
+  const twitchUser = await fetchTwitchUser(tokenBundle.accessToken);
+
+  // 3) Upsert Streamer + store tokens
+  const streamer = await upsertStreamerFromTwitchUser(twitchUser, tokenBundle);
+
+  return { streamer, twitchUser, tokenBundle };
 }
 
 module.exports = {
-  randomToken,
-  buildTwitchAuthorizeUrl,
+  handleOAuthCallback,
   exchangeCodeForToken,
   fetchTwitchUser,
   upsertStreamerFromTwitchUser,
-  saveTwitchTokensForStreamer, // ✅ NEW export
 };
