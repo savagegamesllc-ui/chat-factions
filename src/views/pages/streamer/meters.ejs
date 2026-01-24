@@ -13,15 +13,12 @@
           <div class="brand-dot"></div>
           <div>
             <%- include('../../partials/streamerHeader', {
-  pageTitle: 'meters',
-  pageSub: 'Realtime faction hype (SSE)',
-  activeTab: 'meters'
-}) %>
-  
+              pageTitle: 'meters',
+              pageSub: 'Realtime faction hype (SSE)',
+              activeTab: 'meters'
+            }) %>
           </div>
         </div>
-
-
       </div>
 
       <div id="status" class="notice" style="display:none;"></div>
@@ -69,15 +66,9 @@
         </table>
       </div>
 
-      <script src="/public/js/streamer/meters.js"></script>
-      <script>
-        const s = document.getElementById('status');
-        const mo = new MutationObserver(() => {
-          const has = (s.textContent || '').trim().length > 0;
-          s.style.display = has ? 'block' : 'none';
-        });
-        mo.observe(s, { childList: true, subtree: true, characterData: true });
-      </script>
+      <!-- CSP-safe: external script only -->
+      <script src="/public/js/streamer/meters.js" defer></script>
+
     </div>
   </body>
 </html>

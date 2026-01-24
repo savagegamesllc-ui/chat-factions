@@ -297,4 +297,23 @@ function wireChatButtons() {
 document.addEventListener('DOMContentLoaded', () => {
   wireChatButtons();
   connectSSE().catch(err => showStatus(err.message || 'Failed to connect SSE.', 'error'));
+
+    // CSP-safe replacement for the inline MutationObserver in meters.ejs
+  (function wireStatusAutoShow() {
+    const s = document.getElementById('status');
+    if (!s) return;
+
+    const update = () => {
+      const has = String(s.textContent || '').trim().length > 0;
+      s.style.display = has ? 'block' : 'none';
+    };
+
+    // initial
+    update();
+
+    // auto-toggle whenever status text changes
+    const mo = new MutationObserver(update);
+    mo.observe(s, { childList: true, subtree: true, characterData: true });
+  })();
+
 });
