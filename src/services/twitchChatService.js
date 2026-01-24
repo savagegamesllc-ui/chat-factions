@@ -68,11 +68,61 @@ async function startChatForStreamer(streamerId) {
     clients.delete(streamerId);
   });
 
-  client.on('message', (channel, tags, message, self) => {
-    if (self) return;
-    // Later: parse commands + forward into meters/realtime
-    // console.log('[chat]', channel, tags.username, message);
-  });
+  client.on('message', async (channel, tags, message, self) => {
+  if (self) return;
+
+  try {
+    // Load effective config (defaults + streamer overrides)
+    const chatCfg = await getEffectiveChatConfig(streamerId);
+
+    // Parse command
+    const parsed = parseCommand(message, chatCfg);
+    if (!parsed) return;
+
+    const deltaRaw = Number(parsed.delta);
+    if (!Number.isFinite(deltaRaw) || deltaRaw === 0) return;
+
+    // Cap per message (hype uses config maxDelta; vote is tighter)
+    let capped = Math.trunc(deltaRaw);
+
+    if (parsed.type === 'hype') {
+      const maxD = Number(chatCfg?.commands?.hype?.maxDelta ?? 25);
+      const lim = Number.isFinite(maxD) ? Math.max(1, Math.abs(Math.trunc(maxD))) : 25;
+      capped = Math.max(-lim, Math.min(lim, capped));
+    } else {
+      capped = Math.max(-10, Math.min(10, capped));
+    }
+
+    // Cooldown per user per action type
+    const session = await getOrCreateActiveSession(streamerId);
+    const userKey = getUserKey(tags);
+    const action = parsed.type; // "vote" | "hype"
+
+    const overrideMinutes = chatCfg?.cooldownMinutes?.[action];
+    const allowed = await checkAndTouchCooldown(
+      session.id,
+      action,
+      userKey,
+      overrideMinutes
+    );
+
+    if (!allowed) return;
+
+    // Apply to meters + log analytics via addHype implementation
+    await addHype(streamerId, parsed.factionKey, capped, 'chat', {
+      cmd: parsed.type,
+      user: tags?.username || null,
+      displayName: tags?.['display-name'] || null
+    });
+
+    // Broadcast fresh snapshot to overlays
+    const snap = await getMetersSnapshot(streamerId);
+    broadcast(streamerId, 'meters', snap);
+  } catch (e) {
+    // Don’t crash the chat loop
+    // (Optional) console.log('chat handler error', e);
+  }
+});
 
   try {
     await client.connect();

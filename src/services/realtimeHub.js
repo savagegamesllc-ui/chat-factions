@@ -3,42 +3,35 @@
 
 const clientsByStreamerId = new Map(); // streamerId -> Set(res)
 
-/**
- * Register an SSE client response
- */
 function registerClient(streamerId, res) {
-  if (!clientsByStreamerId.has(streamerId)) {
-    clientsByStreamerId.set(streamerId, new Set());
-  }
-  const set = clientsByStreamerId.get(streamerId);
+  const key = String(streamerId);
+  if (!clientsByStreamerId.has(key)) clientsByStreamerId.set(key, new Set());
+  const set = clientsByStreamerId.get(key);
   set.add(res);
 
   res.on('close', () => {
     try {
       set.delete(res);
-      if (set.size === 0) clientsByStreamerId.delete(streamerId);
+      if (set.size === 0) clientsByStreamerId.delete(key);
     } catch (_) {}
   });
 }
 
-/**
- * Broadcast event payload to all SSE clients for streamerId
- */
-const listenersByStreamer = new Map();
-
-function subscribe(streamerId, fn) {
-  const key = String(streamerId);
-  if (!listenersByStreamer.has(key)) listenersByStreamer.set(key, new Set());
-  const set = listenersByStreamer.get(key);
-  set.add(fn);
-  return () => set.delete(fn);
-}
-
 function broadcast(streamerId, eventName, payload) {
   const key = String(streamerId);
-  const set = listenersByStreamer.get(key);
-  if (!set) return;
-  for (const fn of set) fn(eventName, payload);
+  const set = clientsByStreamerId.get(key);
+  if (!set || set.size === 0) return;
+
+  const data = `event: ${eventName}\n` + `data: ${JSON.stringify(payload)}\n\n`;
+
+  for (const res of set) {
+    try {
+      res.write(data);
+    } catch (_) {
+      // If write fails, drop it
+      try { set.delete(res); } catch {}
+    }
+  }
 }
 
-module.exports = { registerClient, subscribe, broadcast };
+module.exports = { registerClient, broadcast };
