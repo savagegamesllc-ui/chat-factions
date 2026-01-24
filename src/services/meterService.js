@@ -1,171 +1,81 @@
-// src/services/meterService.js
+// src/services/metersService.js
 'use strict';
 
 const { prisma } = require('../db/prisma');
 const { getOrCreateActiveSession } = require('./sessionService');
-const { applyDecayIfNeeded } = require('./decayService');
 
-
-function clampInt(n, min, max) {
-  const x = Math.trunc(Number(n));
-  if (!Number.isFinite(x)) return min;
-  return Math.max(min, Math.min(max, x));
-}
-
-/**
- * Returns faction list for streamer (active only by default)
- */
-async function listActiveFactions(streamerId) {
-  return prisma.faction.findMany({
-    where: { streamerId, isActive: true },
-    orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
-    select: { id: true, key: true, name: true, colorHex: true, sortOrder: true }
-  });
+function normFactionKey(k) {
+  return String(k || '').trim().toUpperCase();
 }
 
 async function getMetersSnapshot(streamerId) {
   const session = await getOrCreateActiveSession(streamerId);
-  await applyDecayIfNeeded(streamerId, session.id);
-  const factions = await listActiveFactions(streamerId);
 
-  const meters = await prisma.sessionFactionMeter.findMany({
+  const rows = await prisma.sessionFactionMeter.findMany({
     where: { sessionId: session.id },
-    select: { factionId: true, meter: true, updatedAt: true }
+    include: { faction: true },
+    orderBy: [{ faction: { sortOrder: 'asc' } }, { faction: { key: 'asc' } }],
   });
 
-  const byFactionId = new Map(meters.map(m => [m.factionId, m]));
-
-  const out = factions.map(f => ({
-    factionId: f.id,
-    key: f.key,
-    name: f.name,
-    colorHex: f.colorHex,
-    sortOrder: f.sortOrder,
-    meter: byFactionId.get(f.id)?.meter ?? 0
-  }));
-
   return {
+    ok: true,
+    streamerId: String(streamerId),
     sessionId: session.id,
-    streamerId,
-    factions: out,
-    updatedAt: new Date().toISOString()
+    updatedAt: new Date().toISOString(),
+    meters: rows.map((r) => ({
+      factionKey: r.faction.key,
+      name: r.faction.name,
+      colorHex: r.faction.colorHex,
+      meter: r.meter,
+    })),
   };
 }
 
-/**
- * Apply a "hype" delta to a faction meter for the active session.
- * Creates SessionFactionMeter rows lazily.
- */
-async function addHype(streamerId, factionKey, delta, source, meta) {
+async function addHype(streamerId, factionKey, delta, source = 'chat', meta = {}) {
   const session = await getOrCreateActiveSession(streamerId);
-  await applyDecayIfNeeded(streamerId, session.id);
-  const faction = await prisma.faction.findUnique({
-    where: { streamerId_key: { streamerId, key: String(factionKey).toUpperCase() } },
-    select: { id: true, key: true, isActive: true }
-  });
+  const key = normFactionKey(factionKey);
 
-  if (!faction || !faction.isActive) {
-    throw Object.assign(new Error('Faction not found or inactive.'), { statusCode: 404 });
+  const faction = await prisma.faction.findUnique({ where: { key } });
+  if (!faction) {
+    const e = new Error(`Unknown faction key: ${key}`);
+    e.statusCode = 400;
+    throw e;
   }
 
-  const inc = clampInt(delta, -1000000, 1000000);
-  if (inc === 0) return { ok: true, sessionId: session.id };
-
-  // Upsert meter row then increment
+  // Ensure meter row exists
   const meterRow = await prisma.sessionFactionMeter.upsert({
     where: { sessionId_factionId: { sessionId: session.id, factionId: faction.id } },
-    update: { meter: { increment: inc } },
-    create: {
-      sessionId: session.id,
-      factionId: faction.id,
-      meter: inc
-    }
+    create: { sessionId: session.id, factionId: faction.id, meter: 0 },
+    update: {},
   });
 
-  // Log event (optional but useful)
+  // Apply delta (clamp at 0 min)
+  const next = Math.max(0, Number(meterRow.meter || 0) + Number(delta || 0));
+
+  await prisma.sessionFactionMeter.update({
+    where: { id: meterRow.id },
+    data: { meter: next },
+  });
+
+  // Analytics log
   await prisma.eventLog.create({
     data: {
-      streamerId,
-      sessionId: session.id,
-      type: 'HYPE_EVENT',
+      streamerId: String(streamerId),
+      type: 'hype',
+      source: String(source || 'chat'),
       payload: {
-        factionKey: faction.key,
-        delta: inc,
-        source: source || 'api',
-        meta: meta || null
-      }
-    }
+        factionKey: key,
+        delta: Number(delta || 0),
+        meter: next,
+        meta: meta || {},
+      },
+    },
   });
 
-  return { ok: true, sessionId: session.id, factionId: faction.id, meter: meterRow.meter };
-}
-async function setHype(streamerId, factionKey, value, source, meta) {
-  const session = await getOrCreateActiveSession(streamerId);
-  await applyDecayIfNeeded(streamerId, session.id);
-  const faction = await prisma.faction.findUnique({
-    where: { streamerId_key: { streamerId, key: String(factionKey).toUpperCase() } },
-    select: { id: true, key: true, isActive: true }
-  });
-
-  if (!faction || !faction.isActive) {
-    throw Object.assign(new Error('Faction not found or inactive.'), { statusCode: 404 });
-  }
-
-  const v = clampInt(value, -100000000, 100000000);
-
-  const meterRow = await prisma.sessionFactionMeter.upsert({
-    where: { sessionId_factionId: { sessionId: session.id, factionId: faction.id } },
-    update: { meter: v },
-    create: {
-      sessionId: session.id,
-      factionId: faction.id,
-      meter: v
-    }
-  });
-
-  await prisma.eventLog.create({
-    data: {
-      streamerId,
-      sessionId: session.id,
-      type: 'HYPE_SET',
-      payload: {
-        factionKey: faction.key,
-        value: v,
-        source: source || 'api',
-        meta: meta || null
-      }
-    }
-  });
-
-  return { ok: true, sessionId: session.id, factionId: faction.id, meter: meterRow.meter };
-}
-
-async function resetHype(streamerId, factionKey, source, meta) {
-  return setHype(streamerId, factionKey, 0, source || 'api', meta);
-}
-
-async function bulkAddHype(streamerId, items, source, meta) {
-  // items: [{ factionKey, delta }]
-  if (!Array.isArray(items) || items.length === 0) {
-    throw Object.assign(new Error('items must be a non-empty array.'), { statusCode: 400 });
-  }
-
-  // Apply sequentially for correctness (simple). We can optimize later.
-  const results = [];
-  for (const it of items) {
-    const fk = String(it?.factionKey || '');
-    const d = it?.delta ?? 0;
-    if (!fk) continue;
-    results.push(await addHype(streamerId, fk, d, source, meta));
-  }
-  return { ok: true, count: results.length, results };
+  return { ok: true, sessionId: session.id, factionKey: key, meter: next };
 }
 
 module.exports = {
-  getMetersSnapshot,
   addHype,
-  setHype,
-  resetHype,
-  bulkAddHype
+  getMetersSnapshot,
 };
-

@@ -1,73 +1,62 @@
 // src/services/realtimeHub.js
 'use strict';
 
-const clientsByStreamerId = new Map(); // streamerId -> Set(res)
-const listenersByStreamer = new Map(); // streamerId -> Set(fn)
-
-
 /**
- * Register an SSE client response (Express res)
+ * SSE hub:
+ * - clientsByStreamer: streamerId -> Set(res)
+ * - broadcast(streamerId, event, data): pushes SSE
  */
-function registerClient(streamerId, res) {
-  const key = String(streamerId);
 
-  if (!clientsByStreamerId.has(key)) {
-    clientsByStreamerId.set(key, new Set());
-  }
-  const set = clientsByStreamerId.get(key);
+const clientsByStreamer = new Map();
+
+function ensureSet(streamerId) {
+  const key = String(streamerId || '');
+  if (!key) return null;
+  if (!clientsByStreamer.has(key)) clientsByStreamer.set(key, new Set());
+  return clientsByStreamer.get(key);
+}
+
+function registerSseClient(streamerId, res) {
+  const set = ensureSet(streamerId);
+  if (!set) return () => {};
+
   set.add(res);
 
-  // Cleanup on disconnect
+  // Clean up on disconnect
   res.on('close', () => {
-    try {
-      set.delete(res);
-      if (set.size === 0) clientsByStreamerId.delete(key);
-    } catch (_) {}
+    try { set.delete(res); } catch {}
+    if (set.size === 0) clientsByStreamer.delete(String(streamerId));
   });
+
+  return () => {
+    try { set.delete(res); } catch {}
+    if (set.size === 0) clientsByStreamer.delete(String(streamerId));
+  };
 }
 
-/**
- * Optional in-process subscriber pattern (kept for any UI that uses it)
- */
-function subscribe(streamerId, fn) {
-  const key = String(streamerId);
-  if (!listenersByStreamer.has(key)) listenersByStreamer.set(key, new Set());
-  const set = listenersByStreamer.get(key);
-  set.add(fn);
-  return () => set.delete(fn);
+function writeSse(res, eventName, payload) {
+  // SSE format
+  res.write(`event: ${eventName}\n`);
+  res.write(`data: ${JSON.stringify(payload)}\n\n`);
 }
 
-/**
- * Broadcast an SSE event to:
- *  1) all registered SSE responses (registerClient)
- *  2) any in-process subscribers (subscribe)
- */
 function broadcast(streamerId, eventName, payload) {
-  const key = String(streamerId);
+  const set = clientsByStreamer.get(String(streamerId));
+  if (!set || set.size === 0) return { ok: true, delivered: 0 };
 
-  // 1) SSE responses
-  const resSet = clientsByStreamerId.get(key);
-  if (resSet && resSet.size) {
-    const data = JSON.stringify(payload ?? {});
-    for (const res of Array.from(resSet)) {
-      try {
-        res.write(`event: ${eventName}\n`);
-        res.write(`data: ${data}\n\n`);
-      } catch (_) {
-        // if write fails, drop it
-        try { resSet.delete(res); } catch (_) {}
-      }
-    }
-    if (resSet.size === 0) clientsByStreamerId.delete(key);
-  }
-
-  // 2) Local listeners
-  const fnSet = listenersByStreamer.get(key);
-  if (fnSet && fnSet.size) {
-    for (const fn of fnSet) {
-      try { fn(eventName, payload); } catch (_) {}
+  let delivered = 0;
+  for (const res of set) {
+    try {
+      writeSse(res, eventName, payload);
+      delivered++;
+    } catch (_) {
+      try { set.delete(res); } catch {}
     }
   }
+  return { ok: true, delivered };
 }
 
-module.exports = { registerClient, subscribe, broadcast };
+module.exports = {
+  registerSseClient,
+  broadcast,
+};

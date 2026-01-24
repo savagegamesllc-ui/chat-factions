@@ -5,9 +5,50 @@ const tmi = require('tmi.js');
 const { prisma } = require('../db/prisma');
 const { getValidAccessToken } = require('./twitchTokenService');
 const { getEffectiveChatConfig } = require('./chatConfigService');
-
+const { getOrCreateActiveSession } = require('./sessionService');
+const { checkAndTouchCooldown } = require('./cooldownService');
+const { addHype, getMetersSnapshot } = require('./metersService');
+const { broadcast } = require('./realtimeHub');
 
 const clients = new Map(); // streamerId -> { client, channel }
+
+function getUserKey(tags) {
+  // stable key per user; prefer user-id
+  const uid = tags && (tags['user-id'] || tags.userId);
+  if (uid) return `uid:${String(uid)}`;
+  const u = tags && (tags.username || tags['display-name']);
+  return `user:${String(u || 'unknown').toLowerCase()}`;
+}
+
+function parseCommand(message, chatCfg) {
+  const text = String(message || '').trim();
+  if (!text.startsWith('!')) return null;
+
+  // defaults (these exist in your chatConfigService defaults)
+  const hypeCmd = String(chatCfg?.commands?.hype?.name || '!hype').toLowerCase();
+  const maxCmd = String(chatCfg?.commands?.maxhype?.name || '!maxhype').toLowerCase();
+
+  const parts = text.split(/\s+/);
+  const cmd = parts[0].toLowerCase();
+
+  // !hype ORDER 5
+  if (cmd === hypeCmd) {
+    const factionKey = (parts[1] || '').toUpperCase();
+    const delta = Number(parts[2] || 0);
+    if (!factionKey) return null;
+    return { type: 'hype', factionKey, delta };
+  }
+
+  // !maxhype ORDER  (debug)
+  if (cmd === maxCmd) {
+    const factionKey = (parts[1] || '').toUpperCase();
+    if (!factionKey) return null;
+    // big visible spike
+    return { type: 'hype', factionKey, delta: 100 };
+  }
+
+  return null;
+}
 
 async function startChatForStreamer(streamerId) {
   if (!streamerId) {
@@ -19,7 +60,7 @@ async function startChatForStreamer(streamerId) {
   if (clients.has(streamerId)) return { ok: true, alreadyRunning: true };
 
   const streamer = await prisma.streamer.findUnique({
-    where: { id: streamerId },
+    where: { id: String(streamerId) },
     select: {
       id: true,
       login: true,
@@ -34,136 +75,84 @@ async function startChatForStreamer(streamerId) {
   }
 
   if (!streamer.login) {
-    const e = new Error('Streamer.login is missing (Twitch username). Re-auth via Twitch to populate it.');
+    const e = new Error(
+      'Streamer.login is missing (Twitch username). Re-auth via Twitch to populate it.'
+    );
     e.statusCode = 400;
     throw e;
   }
 
-  const token = await getValidAccessToken(streamerId);
-  if (!token) {
-    const e = new Error('No Twitch access token available.');
-    e.statusCode = 400;
-    throw e;
-  }
+  const channelName = streamer.login.startsWith('#') ? streamer.login : `#${streamer.login}`;
 
-  const channelName = streamer.login;
+  // Token must exist (OAuth)
+  const accessToken = await getValidAccessToken(streamer.id);
 
   const client = new tmi.Client({
-    options: { debug: true },
+    options: { debug: false },
+    connection: {
+      secure: true,
+      reconnect: true,
+    },
     identity: {
-      username: channelName,
-      password: `oauth:${token}`,
+      username: streamer.login,      // ok for read; twitch allows this pattern
+      password: `oauth:${accessToken}`,
     },
     channels: [channelName],
   });
 
-  client.on('notice', (channel, msgid, message) => {
-    console.log('[tmi notice]', { streamerId, channel, msgid, message });
-  });
-
   client.on('connected', (addr, port) => {
-    console.log('[tmi connected]', { streamerId, addr, port, channel: channelName });
+    console.log('[tmi connected]', {
+      streamerId: streamer.id,
+      addr,
+      port,
+      channel: channelName.replace('#', ''),
+    });
   });
-
-  client.on('disconnected', (reason) => {
-    console.log('[tmi disconnected]', { streamerId, reason });
-    clients.delete(streamerId);
-  });
-
-  function parseCommand(message, chatCfg) {
-  const prefix = String(chatCfg?.prefix ?? '!').trim() || '!';
-  const raw = String(message || '').trim();
-  if (!raw.startsWith(prefix)) return null;
-
-  const parts = raw.slice(prefix.length).trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return null;
-
-  const cmd = String(parts[0] || '').toLowerCase();
-  const factionKey = (parts[1] ? String(parts[1]).trim().toUpperCase() : '');
-  const delta = parts[2] !== undefined ? Number(parts[2]) : 1;
-
-  if (!factionKey) return null;
-
-  if (cmd === 'vote') {
-    if (chatCfg?.commands?.vote?.enabled === false) return null;
-    // vote default delta=1; allow explicit +/- but clamp later
-    return { type: 'vote', factionKey, delta: Number.isFinite(delta) ? delta : 1 };
-  }
-
-  if (cmd === 'hype') {
-    if (chatCfg?.commands?.hype?.enabled === false) return null;
-    // hype default delta=1 if missing or invalid
-    const d = Number.isFinite(delta) ? delta : 1;
-    return { type: 'hype', factionKey, delta: d };
-  }
-
-  return null;
-}
 
   client.on('message', async (channel, tags, message, self) => {
-  if (self) return;
+    if (self) return;
 
-  try {
-    // Load effective config (defaults + streamer overrides)
-    const chatCfg = await getEffectiveChatConfig(streamerId);
+    try {
+      const chatCfg = await getEffectiveChatConfig(streamer.id);
+      const parsed = parseCommand(message, chatCfg);
+      if (!parsed) return;
 
-    // Parse command
-    const parsed = parseCommand(message, chatCfg);
-    if (!parsed) return;
+      // Cap per command
+      let deltaRaw = Number(parsed.delta || 0);
+      if (!Number.isFinite(deltaRaw) || deltaRaw === 0) return;
 
-    const deltaRaw = Number(parsed.delta);
-    if (!Number.isFinite(deltaRaw) || deltaRaw === 0) return;
+      let capped = Math.trunc(deltaRaw);
 
-    // Cap per message (hype uses config maxDelta; vote is tighter)
-    let capped = Math.trunc(deltaRaw);
-
-    if (parsed.type === 'hype') {
       const maxD = Number(chatCfg?.commands?.hype?.maxDelta ?? 25);
       const lim = Number.isFinite(maxD) ? Math.max(1, Math.abs(Math.trunc(maxD))) : 25;
       capped = Math.max(-lim, Math.min(lim, capped));
-    } else {
-      capped = Math.max(-10, Math.min(10, capped));
+
+      // cooldown
+      const session = await getOrCreateActiveSession(streamer.id);
+      const userKey = getUserKey(tags);
+
+      const overrideMinutes = chatCfg?.cooldownMinutes?.hype;
+      const allowed = await checkAndTouchCooldown(session.id, 'hype', userKey, overrideMinutes);
+      if (!allowed) return;
+
+      // apply
+      await addHype(streamer.id, parsed.factionKey, capped, 'chat', {
+        user: tags?.username || null,
+        displayName: tags?.['display-name'] || null,
+        raw: String(message || ''),
+      });
+
+      // broadcast updated snapshot
+      const snap = await getMetersSnapshot(streamer.id);
+      broadcast(streamer.id, 'meters', snap);
+    } catch (e) {
+      console.error('[twitchChatService] message handler error:', e?.message || e);
     }
+  });
 
-    // Cooldown per user per action type
-    const session = await getOrCreateActiveSession(streamerId);
-    const userKey = getUserKey(tags);
-    const action = parsed.type; // "vote" | "hype"
-
-    const overrideMinutes = chatCfg?.cooldownMinutes?.[action];
-    const allowed = await checkAndTouchCooldown(
-      session.id,
-      action,
-      userKey,
-      overrideMinutes
-    );
-
-    if (!allowed) return;
-
-    // Apply to meters + log analytics via addHype implementation
-    await addHype(streamerId, parsed.factionKey, capped, 'chat', {
-      cmd: parsed.type,
-      user: tags?.username || null,
-      displayName: tags?.['display-name'] || null
-    });
-
-    // Broadcast fresh snapshot to overlays
-    const snap = await getMetersSnapshot(streamerId);
-    broadcast(streamerId, 'meters', snap);
-  } catch (e) {
-console.error('[twitchChatService] message handler error:', e?.message || e);
-  }
-});
-
-  try {
-    await client.connect();
-  } catch (err) {
-    console.error('[tmi connect] failed', err);
-    throw err instanceof Error ? err : new Error('tmi.connect failed');
-  }
+  await client.connect();
 
   clients.set(streamerId, { client, channel: channelName });
-
   return { ok: true };
 }
 

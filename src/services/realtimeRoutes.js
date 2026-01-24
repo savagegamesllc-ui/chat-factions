@@ -2,10 +2,10 @@
 'use strict';
 
 const express = require('express');
-const { subscribe } = require('../services/realtimeHub');
+const { registerSseClient } = require('../services/realtimeHub');
 
 function requireStreamer(req, res) {
-  const streamerId = req.session?.streamerId;
+  const streamerId = req.session && req.session.streamerId;
   if (!streamerId) {
     res.status(401).json({ error: 'Not authenticated' });
     return null;
@@ -21,41 +21,30 @@ function realtimeRoutes() {
     res.json({ ok: true, ts: new Date().toISOString() });
   });
 
-  // GET /admin/api/realtime/sse
+  // GET /admin/api/realtime/sse  (THIS IS WHAT meters.js expects)
   router.get('/api/realtime/sse', (req, res) => {
     const streamerId = requireStreamer(req, res);
     if (!streamerId) return;
 
-    // SSE headers
     res.status(200);
-    res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+    res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache, no-transform');
     res.setHeader('Connection', 'keep-alive');
-    // If behind nginx, this helps prevent buffering:
-    res.setHeader('X-Accel-Buffering', 'no');
+    res.setHeader('X-Accel-Buffering', 'no'); // helps nginx SSE
 
-    // First message immediately (lets the browser “open” the stream)
-    res.write(`event: ready\ndata: ${JSON.stringify({ ok: true, ts: Date.now() })}\n\n`);
+    // initial comment to open stream
+    res.write(`: ok\n\n`);
 
-    // Keepalive ping every 25s (prevents idle timeouts)
-    const keepAlive = setInterval(() => {
-      try {
-        res.write(`event: ping\ndata: ${Date.now()}\n\n`);
-      } catch (_) {}
+    // register
+    registerSseClient(streamerId, res);
+
+    // heartbeat
+    const t = setInterval(() => {
+      try { res.write(`event: ping\ndata: {"ts":"${new Date().toISOString()}"}\n\n`); } catch {}
     }, 25000);
 
-    // Subscribe to server broadcasts for this streamer
-    const unsubscribe = subscribe(streamerId, (eventName, payload) => {
-      try {
-        res.write(`event: ${eventName}\n`);
-        res.write(`data: ${JSON.stringify(payload ?? null)}\n\n`);
-      } catch (_) {}
-    });
-
-    // Cleanup
     req.on('close', () => {
-      clearInterval(keepAlive);
-      try { unsubscribe(); } catch (_) {}
+      clearInterval(t);
     });
   });
 
