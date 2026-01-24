@@ -16,6 +16,16 @@ function requireStreamer(req, res) {
 function chatRoutes() {
   const router = express.Router();
 
+  //temp fingerprint
+    router.get('/admin/api/chat/_fingerprint', (req, res) => {
+      res.json({
+        ok: true,
+        file: 'src/routes/chatRoutes.js',
+        aliases: true,
+        ts: new Date().toISOString(),
+      });
+    });
+
   // meters.js tries these first
   router.post('/admin/api/chat/start', async (req, res) => {
     const streamerId = requireStreamer(req, res);
