@@ -1,199 +1,87 @@
-// src/services/twitchChatService.js
 'use strict';
 
-const tmi = require('tmi.js');
-const { prisma } = require('../db/prisma');
-const { getValidAccessToken } = require('./twitchTokenService');
-const { addHype, getMetersSnapshot } = require('./meterService');
-const { broadcast } = require('./realtimeHub');
-const { getOrCreateActiveSession } = require('./sessionService');
-const { checkAndTouchCooldown } = require('./cooldownService');
-const { getEffectiveChatConfig } = require('./chatConfigService');
+import tmi from 'tmi.js';
+import { prisma } from '../db/prisma.js';
+import { getValidAccessToken } from './twitchTokenService.js';
 
-const clients = new Map(); // streamerId -> { client, channel }
+const activeClients = new Map(); // streamerId -> tmi client
 
-function normalizeFactionKey(s) {
-  return String(s || '').trim().toUpperCase();
-}
-
-function parseCommand(message, chatCfg) {
-  const txt = String(message || '').trim();
-  const prefix = String(chatCfg?.prefix || '!');
-
-  if (!txt.startsWith(prefix)) return null;
-
-  const parts = txt.split(/\s+/);
-  const cmd = parts[0].slice(prefix.length).toLowerCase();
-
-  const voteCfg = chatCfg?.commands?.vote || {};
-  const hypeCfg = chatCfg?.commands?.hype || {};
-
-  if (cmd === 'vote' && voteCfg.enabled !== false && parts[1]) {
-    const w = Number(voteCfg.weight ?? 1);
-    const weight = Number.isFinite(w) ? Math.trunc(w) : 1;
-    return { type: 'vote', factionKey: normalizeFactionKey(parts[1]), delta: weight };
+export async function startChatForStreamer(streamerId) {
+  if (!streamerId) {
+    const err = new Error('Missing streamerId');
+    err.statusCode = 400;
+    throw err;
   }
 
-  if (cmd === 'hype' && hypeCfg.enabled !== false && parts[1]) {
-    const delta = parts[2] != null ? Number(parts[2]) : 1;
-    return { type: 'hype', factionKey: normalizeFactionKey(parts[1]), delta };
+  // Prevent duplicate listeners
+  if (activeClients.has(streamerId)) {
+    return { ok: true, alreadyRunning: true };
   }
 
-  return null;
-}
+  // 🔑 THIS IS THE KEY FIX
+  const token = await getValidAccessToken(streamerId);
 
-function getUserKey(tags) {
-  // Prefer Twitch numeric user-id (stable); fallback to username
-  const id = tags?.['user-id'];
-  if (id) return `twitch:${id}`;
-  const name = tags?.username;
-  if (name) return `twitchuser:${String(name).toLowerCase()}`;
-  return 'twitch:unknown';
-}
-
-async function startChatForStreamer(streamerId) {
-  if (clients.has(streamerId)) return { ok: true, already: true };
+  if (!token) {
+    const err = new Error('No Twitch access token available');
+    err.statusCode = 400;
+    throw err;
+  }
 
   const streamer = await prisma.streamer.findUnique({
     where: { id: streamerId },
-    select: {
-      id: true,
-      login: true,
-      displayName: true,
-    },
+    select: { twitchLogin: true }
   });
 
-  if (!streamer || !streamer.login) {
-    throw Object.assign(
-      new Error('Streamer has no Twitch login; re-auth may be required.'),
-      { statusCode: 400 }
-    );
-  }
-
-  // Load chat config (prefix, cooldowns, weights, etc.)
-  const chatCfg = await getEffectiveChatConfig(streamerId);
-
-  // Get a valid access token (refreshes if needed)
-  const token = await getValidAccessToken(streamerId);
-
-  // Hard fail if token is not usable (prevents weird “start failed”)
-  if (!token || typeof token !== 'string' || token.length < 10) {
-    throw Object.assign(
-      new Error('No valid Twitch access token returned by getValidAccessToken().'),
-      { statusCode: 400 }
-    );
+  if (!streamer?.twitchLogin) {
+    const err = new Error('Streamer Twitch login not found');
+    err.statusCode = 400;
+    throw err;
   }
 
   const client = new tmi.Client({
-    options: {
-      // ✅ Turn this on while troubleshooting prod listener issues.
-      // You can set back to false after stable.
-      debug: true,
-    },
+    options: { debug: false },
     identity: {
-      username: streamer.login,
+      username: streamer.twitchLogin,
       password: `oauth:${token}`,
     },
-    channels: [streamer.login],
+    channels: [streamer.twitchLogin],
   });
 
-  // Helpful diagnostics from Twitch IRC
-  client.on('notice', (channel, msgid, message) => {
-    console.log('[tmi notice]', { streamerId, channel, msgid, message });
-  });
-
-  client.on('connected', (addr, port) => {
-    console.log('[tmi connected]', { streamerId, addr, port, channel: streamer.login });
-  });
-
-  client.on('disconnected', (reason) => {
-    console.log('[tmi disconnected]', { streamerId, reason });
-    clients.delete(streamerId);
-  });
-
-  client.on('message', async (channel, tags, message, self) => {
-    try {
-      if (self) return;
-
-      const parsed = parseCommand(message, chatCfg);
-      if (!parsed) return;
-
-      const delta = Number(parsed.delta);
-      if (!Number.isFinite(delta) || delta === 0) return;
-
-      // Cap per message
-      let capped = Math.trunc(delta);
-
-      if (parsed.type === 'hype') {
-        const maxD = Number(chatCfg?.commands?.hype?.maxDelta ?? 25);
-        const lim = Number.isFinite(maxD)
-          ? Math.max(1, Math.abs(Math.trunc(maxD)))
-          : 25;
-        capped = Math.max(-lim, Math.min(lim, capped));
-      } else {
-        // vote: tighter cap
-        capped = Math.max(-10, Math.min(10, capped));
-      }
-
-      // Cooldown per user per action type (vote/hype)
-      const session = await getOrCreateActiveSession(streamerId);
-      const userKey = getUserKey(tags);
-      const action = parsed.type;
-
-      const overrideMinutes = chatCfg?.cooldownMinutes?.[action];
-      const allowed = await checkAndTouchCooldown(
-        session.id,
-        action,
-        userKey,
-        overrideMinutes
-      );
-
-      if (!allowed) return;
-
-      await addHype(streamerId, parsed.factionKey, capped, 'chat', {
-        cmd: parsed.type,
-        user: tags?.username || null,
-        displayName: tags?.['display-name'] || null,
-      });
-
-      const snap = await getMetersSnapshot(streamerId);
-      broadcast(streamerId, 'meters', snap);
-    } catch (err) {
-      // Don’t crash the listener loop; log once if you want
-      // console.error('[tmi message handler] error', err);
-    }
-  });
-
-  // ✅ Connect with explicit error logging
   try {
     await client.connect();
   } catch (e) {
-    console.error('[tmi connect] failed:', e);
-    throw (e instanceof Error) ? e : new Error(typeof e === 'string' ? e : 'tmi.connect() failed');
+    console.error('[tmi.connect] failed', e);
+    throw new Error('Failed to connect to Twitch chat');
   }
 
-  clients.set(streamerId, { client, channel: streamer.login });
+  client.on('message', (channel, tags, message, self) => {
+    if (self) return;
+
+    // 🔥 This is where you emit to SSE / WS later
+    // realtimeHub.emitChatMessage(...)
+  });
+
+  activeClients.set(streamerId, client);
+
   return { ok: true };
 }
 
-async function stopChatForStreamer(streamerId) {
-  const entry = clients.get(streamerId);
-  if (!entry) return { ok: true, already: true };
+export async function stopChatForStreamer(streamerId) {
+  const client = activeClients.get(streamerId);
+  if (!client) return { ok: true, notRunning: true };
 
   try {
-    await entry.client.disconnect();
-  } catch (_) {}
+    await client.disconnect();
+  } catch (e) {
+    console.warn('[tmi.disconnect] failed', e);
+  }
 
-  clients.delete(streamerId);
+  activeClients.delete(streamerId);
   return { ok: true };
 }
 
-function getChatStatus(streamerId) {
-  return { connected: clients.has(streamerId) };
+export async function getChatStatus(streamerId) {
+  return {
+    running: activeClients.has(streamerId),
+  };
 }
-
-module.exports = {
-  startChatForStreamer,
-  stopChatForStreamer,
-  getChatStatus,
-};
