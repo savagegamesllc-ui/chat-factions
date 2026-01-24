@@ -176,8 +176,63 @@ async function handleOAuthCallback(code) {
 }
 
 module.exports = {
+  // ✅ needed by authRoutes.js
+  randomToken,
+  buildTwitchAuthorizeUrl,
+
+  // ✅ unified flow (optional to use)
   handleOAuthCallback,
+
+  // ✅ legacy exports (authRoutes.js currently uses these)
   exchangeCodeForToken,
   fetchTwitchUser,
   upsertStreamerFromTwitchUser,
+
+  // ✅ keep this name because your authRoutes.js calls it
+  saveTwitchTokensForStreamer: async function saveTwitchTokensForStreamer(streamerId, tokenJson) {
+    if (!streamerId) throw new Error('Missing streamerId');
+
+    // tokenJson may be in either shape depending on caller
+    const access =
+      tokenJson?.access_token ??
+      tokenJson?.accessToken ??
+      null;
+
+    const refresh =
+      tokenJson?.refresh_token ??
+      tokenJson?.refreshToken ??
+      null;
+
+    const expiresIn =
+      tokenJson?.expires_in ??
+      null;
+
+    const expiresAt =
+      tokenJson?.expiresAt ??
+      (expiresIn ? new Date(Date.now() + Number(expiresIn) * 1000) : null);
+
+    const scopes =
+      tokenJson?.scope ??
+      tokenJson?.scopes ??
+      null;
+
+    // Normalize scope to array
+    const scopeArr = Array.isArray(scopes)
+      ? scopes.map(String).filter(Boolean)
+      : (typeof scopes === 'string'
+          ? scopes.split(/\s+/).map((s) => s.trim()).filter(Boolean)
+          : []);
+
+    // NOTE: requires prisma + schema fields you already have
+    return prisma.streamer.update({
+      where: { id: String(streamerId) },
+      data: {
+        twitchAccessToken: access,
+        twitchRefreshToken: refresh,
+        twitchTokenExpiresAt: expiresAt,
+        twitchScopes: scopeArr,
+        twitchTokenUpdatedAt: new Date(),
+      },
+    });
+  },
 };
