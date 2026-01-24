@@ -9,7 +9,7 @@ npm-debug.log*
 keys.txt
 
 # Prisma
-prisma/migrations/*
+
 
 # OS / editor junk
 .DS_Store
