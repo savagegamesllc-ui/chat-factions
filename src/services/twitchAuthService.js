@@ -26,8 +26,13 @@ function buildTwitchAuthorizeUrl(state) {
     response_type: 'code',
     client_id: config.twitchClientId,
     redirect_uri: config.twitchRedirectUri,
+
+    // NOTE:
+    // This scope is enough to fetch user identity/email.
+    // If later you want more Twitch API actions, expand scopes here.
     scope: 'user:read:email',
-    state
+
+    state,
   });
 
   return `https://id.twitch.tv/oauth2/authorize?${params.toString()}`;
@@ -44,13 +49,13 @@ async function exchangeCodeForToken(code) {
     client_secret: config.twitchClientSecret,
     code,
     grant_type: 'authorization_code',
-    redirect_uri: config.twitchRedirectUri
+    redirect_uri: config.twitchRedirectUri,
   });
 
-  const resp = await fetch(`https://id.twitch.tv/oauth2/token`, {
+  const resp = await fetch('https://id.twitch.tv/oauth2/token', {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: params
+    body: params,
   });
 
   if (!resp.ok) {
@@ -58,7 +63,8 @@ async function exchangeCodeForToken(code) {
     throw new Error(`Twitch token exchange failed (${resp.status}): ${text}`);
   }
 
-  return resp.json(); // { access_token, refresh_token, expires_in, token_type }
+  // { access_token, refresh_token, expires_in, token_type, scope? }
+  return resp.json();
 }
 
 /**
@@ -70,8 +76,8 @@ async function fetchTwitchUser(accessToken) {
   const resp = await fetch('https://api.twitch.tv/helix/users', {
     headers: {
       Authorization: `Bearer ${accessToken}`,
-      'Client-Id': config.twitchClientId
-    }
+      'Client-Id': config.twitchClientId,
+    },
   });
 
   if (!resp.ok) {
@@ -87,8 +93,10 @@ async function fetchTwitchUser(accessToken) {
   return {
     twitchUserId: String(user.id),
     login: user.login ? String(user.login) : null,
-    displayName: user.display_name ? String(user.display_name) : (user.login ? String(user.login) : 'Streamer'),
-    email: user.email ? String(user.email) : null
+    displayName: user.display_name
+      ? String(user.display_name)
+      : (user.login ? String(user.login) : 'Streamer'),
+    email: user.email ? String(user.email) : null,
   };
 }
 
@@ -99,7 +107,7 @@ async function fetchTwitchUser(accessToken) {
  */
 async function upsertStreamerFromTwitchUser(twitchUser) {
   const existing = await prisma.streamer.findUnique({
-    where: { twitchUserId: twitchUser.twitchUserId }
+    where: { twitchUserId: twitchUser.twitchUserId },
   });
 
   if (existing) {
@@ -108,8 +116,8 @@ async function upsertStreamerFromTwitchUser(twitchUser) {
       data: {
         login: twitchUser.login,
         displayName: twitchUser.displayName,
-        email: twitchUser.email
-      }
+        email: twitchUser.email,
+      },
     });
   }
 
@@ -119,9 +127,43 @@ async function upsertStreamerFromTwitchUser(twitchUser) {
       login: twitchUser.login,
       displayName: twitchUser.displayName,
       email: twitchUser.email,
-      overlayToken: randomToken(24)
-    }
+      overlayToken: randomToken(24),
+    },
   });
+}
+
+/**
+ * ✅ Persist Twitch tokens onto Streamer (matches your schema.prisma fields)
+ * Required for Twitch chat listener.
+ */
+async function saveTwitchTokensForStreamer(streamerId, tokenJson) {
+  if (!streamerId) throw new Error('saveTwitchTokensForStreamer: missing streamerId');
+  if (!tokenJson || !tokenJson.access_token) {
+    throw new Error('saveTwitchTokensForStreamer: missing access_token');
+  }
+
+  const expiresIn = Number(tokenJson.expires_in || 0);
+  const twitchTokenExpiresAt = expiresIn
+    ? new Date(Date.now() + expiresIn * 1000)
+    : null;
+
+  // Twitch scope sometimes arrives as array; sometimes as a string
+  const scopes =
+    Array.isArray(tokenJson.scope) ? tokenJson.scope
+    : (tokenJson.scope ? String(tokenJson.scope).split(' ').filter(Boolean) : []);
+
+  await prisma.streamer.update({
+    where: { id: streamerId },
+    data: {
+      twitchAccessToken: String(tokenJson.access_token),
+      twitchRefreshToken: tokenJson.refresh_token ? String(tokenJson.refresh_token) : null,
+      twitchTokenExpiresAt,
+      twitchScopes: scopes, // Json column in your schema
+      twitchTokenUpdatedAt: new Date(),
+    },
+  });
+
+  return { ok: true };
 }
 
 module.exports = {
@@ -129,5 +171,6 @@ module.exports = {
   buildTwitchAuthorizeUrl,
   exchangeCodeForToken,
   fetchTwitchUser,
-  upsertStreamerFromTwitchUser
+  upsertStreamerFromTwitchUser,
+  saveTwitchTokensForStreamer, // ✅ NEW export
 };

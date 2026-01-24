@@ -8,7 +8,8 @@ const {
   buildTwitchAuthorizeUrl,
   exchangeCodeForToken,
   fetchTwitchUser,
-  upsertStreamerFromTwitchUser
+  upsertStreamerFromTwitchUser,
+  saveTwitchTokensForStreamer, // ✅ NEW
 } = require('../services/twitchAuthService');
 
 function authRoutes() {
@@ -24,7 +25,7 @@ function authRoutes() {
 
     res.render('pages/streamer/login', {
       title: 'Streamer Login',
-      error: null
+      error: null,
     });
   });
 
@@ -48,7 +49,7 @@ function authRoutes() {
       if (error) {
         return res.status(401).render('pages/streamer/login', {
           title: 'Streamer Login',
-          error: String(error_description || error)
+          error: String(error_description || error),
         });
       }
 
@@ -59,25 +60,28 @@ function authRoutes() {
       if (!expectedState || String(state || '') !== String(expectedState)) {
         return res.status(400).render('pages/streamer/login', {
           title: 'Streamer Login',
-          error: 'OAuth state mismatch. Please try again.'
+          error: 'OAuth state mismatch. Please try again.',
         });
       }
 
       if (!code) {
         return res.status(400).render('pages/streamer/login', {
           title: 'Streamer Login',
-          error: 'Missing OAuth code from Twitch.'
+          error: 'Missing OAuth code from Twitch.',
         });
       }
 
-      // Exchange code for token
+      // 1) Exchange code for token
       const tokenJson = await exchangeCodeForToken(String(code));
 
-      // Fetch Twitch user
+      // 2) Fetch Twitch user (Helix)
       const twitchUser = await fetchTwitchUser(tokenJson.access_token);
 
-      // Upsert streamer
+      // 3) Upsert streamer
       const streamer = await upsertStreamerFromTwitchUser(twitchUser);
+
+      // ✅ 4) Persist tokens on Streamer row (needed for chat listener)
+      await saveTwitchTokensForStreamer(streamer.id, tokenJson);
 
       // ✅ Locked contract: store ONE session key
       req.session.streamerId = streamer.id;
