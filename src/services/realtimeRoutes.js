@@ -2,41 +2,64 @@
 'use strict';
 
 const express = require('express');
-const { realtimeHub } = require('../services/realtimeHub');
+const { subscribe } = require('../services/realtimeHub');
 
-/**
- * Routes mounted under /admin (or whatever prefix you use).
- * Provides:
- *   GET  /admin/api/realtime/ping
- *   GET  /admin/api/realtime/sse
- *   POST /admin/api/realtime/push   (debug helper)
- */
-const router = express.Router();
-
-// Simple ping (useful behind nginx)
-router.get('/api/realtime/ping', (req, res) => {
-  res.json({ ok: true, ts: new Date().toISOString() });
-});
-
-// SSE stream (requires streamer session)
-router.get('/api/realtime/sse', (req, res) => {
+function requireStreamer(req, res) {
   const streamerId = req.session?.streamerId;
-  if (!streamerId) return res.status(401).json({ error: 'Not authenticated' });
+  if (!streamerId) {
+    res.status(401).json({ error: 'Not authenticated' });
+    return null;
+  }
+  return streamerId;
+}
 
-  // Let hub own the SSE wiring
-  realtimeHub.openSse(streamerId, req, res);
-});
+function realtimeRoutes() {
+  const router = express.Router();
 
-// Debug endpoint: push an event to yourself (helps validate end-to-end)
-router.post('/api/realtime/push', express.json(), (req, res) => {
-  const streamerId = req.session?.streamerId;
-  if (!streamerId) return res.status(401).json({ error: 'Not authenticated' });
+  // GET /admin/api/realtime/ping
+  router.get('/api/realtime/ping', (req, res) => {
+    res.json({ ok: true, ts: new Date().toISOString() });
+  });
 
-  const type = String(req.body?.type || 'debug');
-  const payload = req.body?.payload ?? { ok: true };
+  // GET /admin/api/realtime/sse
+  router.get('/api/realtime/sse', (req, res) => {
+    const streamerId = requireStreamer(req, res);
+    if (!streamerId) return;
 
-  realtimeHub.broadcast(streamerId, type, payload);
-  res.json({ ok: true });
-});
+    // SSE headers
+    res.status(200);
+    res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('Connection', 'keep-alive');
+    // If behind nginx, this helps prevent buffering:
+    res.setHeader('X-Accel-Buffering', 'no');
 
-module.exports = { realtimeRoutes: router };
+    // First message immediately (lets the browser “open” the stream)
+    res.write(`event: ready\ndata: ${JSON.stringify({ ok: true, ts: Date.now() })}\n\n`);
+
+    // Keepalive ping every 25s (prevents idle timeouts)
+    const keepAlive = setInterval(() => {
+      try {
+        res.write(`event: ping\ndata: ${Date.now()}\n\n`);
+      } catch (_) {}
+    }, 25000);
+
+    // Subscribe to server broadcasts for this streamer
+    const unsubscribe = subscribe(streamerId, (eventName, payload) => {
+      try {
+        res.write(`event: ${eventName}\n`);
+        res.write(`data: ${JSON.stringify(payload ?? null)}\n\n`);
+      } catch (_) {}
+    });
+
+    // Cleanup
+    req.on('close', () => {
+      clearInterval(keepAlive);
+      try { unsubscribe(); } catch (_) {}
+    });
+  });
+
+  return router;
+}
+
+module.exports = { realtimeRoutes: realtimeRoutes() };
