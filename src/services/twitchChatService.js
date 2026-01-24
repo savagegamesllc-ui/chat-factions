@@ -70,6 +70,36 @@ async function startChatForStreamer(streamerId) {
     clients.delete(streamerId);
   });
 
+  function parseCommand(message, chatCfg) {
+  const prefix = String(chatCfg?.prefix ?? '!').trim() || '!';
+  const raw = String(message || '').trim();
+  if (!raw.startsWith(prefix)) return null;
+
+  const parts = raw.slice(prefix.length).trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return null;
+
+  const cmd = String(parts[0] || '').toLowerCase();
+  const factionKey = (parts[1] ? String(parts[1]).trim().toUpperCase() : '');
+  const delta = parts[2] !== undefined ? Number(parts[2]) : 1;
+
+  if (!factionKey) return null;
+
+  if (cmd === 'vote') {
+    if (chatCfg?.commands?.vote?.enabled === false) return null;
+    // vote default delta=1; allow explicit +/- but clamp later
+    return { type: 'vote', factionKey, delta: Number.isFinite(delta) ? delta : 1 };
+  }
+
+  if (cmd === 'hype') {
+    if (chatCfg?.commands?.hype?.enabled === false) return null;
+    // hype default delta=1 if missing or invalid
+    const d = Number.isFinite(delta) ? delta : 1;
+    return { type: 'hype', factionKey, delta: d };
+  }
+
+  return null;
+}
+
   client.on('message', async (channel, tags, message, self) => {
   if (self) return;
 
