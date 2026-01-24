@@ -2,7 +2,11 @@
 'use strict';
 
 const express = require('express');
-const { startChatForStreamer, stopChatForStreamer, getChatStatus } = require('../services/twitchChatService');
+const {
+  startChatForStreamer,
+  stopChatForStreamer,
+  getChatStatus
+} = require('../services/twitchChatService');
 
 function requireStreamer(req, res) {
   const streamerId = req.session && req.session.streamerId;
@@ -13,20 +17,22 @@ function requireStreamer(req, res) {
   return streamerId;
 }
 
+function toErrText(e) {
+  if (!e) return 'Unknown error (empty rejection)';
+  if (typeof e === 'string') return e;
+  if (e instanceof Error) return e.message || e.stack || 'Error (no message)';
+  if (typeof e === 'object') {
+    // try common fields
+    if (e.message) return String(e.message);
+    if (e.error) return String(e.error);
+    try { return JSON.stringify(e); } catch { return String(e); }
+  }
+  return String(e);
+}
+
 function chatRoutes() {
   const router = express.Router();
 
-  //temp fingerprint
-    router.get('/admin/api/chat/_fingerprint', (req, res) => {
-      res.json({
-        ok: true,
-        file: 'src/routes/chatRoutes.js',
-        aliases: true,
-        ts: new Date().toISOString(),
-      });
-    });
-
-  // meters.js tries these first
   router.post('/admin/api/chat/start', async (req, res) => {
     const streamerId = requireStreamer(req, res);
     if (!streamerId) return;
@@ -35,7 +41,12 @@ function chatRoutes() {
       const out = await startChatForStreamer(streamerId);
       res.json(out);
     } catch (e) {
-      res.status(e.statusCode || 500).json({ error: e.message || 'start failed' });
+      // ✅ This is what we NEED right now:
+      console.error('[chat/start] failed:', e);
+
+      res
+        .status((e && e.statusCode) || 500)
+        .json({ error: toErrText(e) });
     }
   });
 
@@ -47,7 +58,10 @@ function chatRoutes() {
       const out = await stopChatForStreamer(streamerId);
       res.json(out);
     } catch (e) {
-      res.status(e.statusCode || 500).json({ error: e.message || 'stop failed' });
+      console.error('[chat/stop] failed:', e);
+      res
+        .status((e && e.statusCode) || 500)
+        .json({ error: toErrText(e) });
     }
   });
 
@@ -59,11 +73,12 @@ function chatRoutes() {
       const out = await getChatStatus(streamerId);
       res.json({ ok: true, ...out });
     } catch (e) {
-      res.status(500).json({ error: e.message || 'status failed' });
+      console.error('[chat/status] failed:', e);
+      res.status(500).json({ error: toErrText(e) });
     }
   });
 
-  // Optional compatibility aliases (meters.js tries these too)
+  // Compatibility aliases (meters.js tries these too)
   router.post('/admin/api/chat/listener/start', (req, res, next) => {
     req.url = '/admin/api/chat/start';
     next();
