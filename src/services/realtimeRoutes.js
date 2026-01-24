@@ -33,6 +33,14 @@ function realtimeRoutes() {
     // Initial comment to open stream
     res.write(`: connected\n\n`);
 
+      const ka = setInterval(() => {
+    try { res.write(`: ping ${Date.now()}\n\n`); } catch (_) {}
+  }, 25000);
+
+  res.on('close', () => {
+    try { clearInterval(ka); } catch (_) {}
+  });
+
     // Register client
     registerClient(streamerId, res);
 

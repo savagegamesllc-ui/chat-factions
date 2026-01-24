@@ -119,8 +119,7 @@ async function startChatForStreamer(streamerId) {
     const snap = await getMetersSnapshot(streamerId);
     broadcast(streamerId, 'meters', snap);
   } catch (e) {
-    // Don’t crash the chat loop
-    // (Optional) console.log('chat handler error', e);
+console.error('[twitchChatService] message handler error:', e?.message || e);
   }
 });
 

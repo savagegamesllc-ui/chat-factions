@@ -1,23 +1,22 @@
 // src/services/realtimeHub.js
 'use strict';
 
-// SSE clients (Express res objects)
-const clientsByStreamerId = new Map(); // streamerId(string) -> Set(res)
-
-// In-process listeners (functions)
-const listenersByStreamer = new Map(); // streamerId(string) -> Set(fn)
+const clientsByStreamerId = new Map(); // streamerId -> Set(res)
+const listenersByStreamer = new Map(); // streamerId -> Set(fn)
 
 /**
- * Register an SSE client response
+ * Register an SSE client response (Express res)
  */
 function registerClient(streamerId, res) {
   const key = String(streamerId);
 
-  if (!clientsByStreamerId.has(key)) clientsByStreamerId.set(key, new Set());
+  if (!clientsByStreamerId.has(key)) {
+    clientsByStreamerId.set(key, new Set());
+  }
   const set = clientsByStreamerId.get(key);
   set.add(res);
 
-  // cleanup on disconnect
+  // Cleanup on disconnect
   res.on('close', () => {
     try {
       set.delete(res);
@@ -27,49 +26,41 @@ function registerClient(streamerId, res) {
 }
 
 /**
- * Subscribe to events in-process (kept for backwards compatibility)
- * fn(eventName, payload)
+ * Optional in-process subscriber pattern (kept for any UI that uses it)
  */
 function subscribe(streamerId, fn) {
   const key = String(streamerId);
   if (!listenersByStreamer.has(key)) listenersByStreamer.set(key, new Set());
   const set = listenersByStreamer.get(key);
   set.add(fn);
-  return () => {
-    try {
-      set.delete(fn);
-      if (set.size === 0) listenersByStreamer.delete(key);
-    } catch (_) {}
-  };
+  return () => set.delete(fn);
 }
 
 /**
- * Broadcast event payload to:
- * 1) SSE clients registered with registerClient()
- * 2) any local subscribers registered with subscribe()
+ * Broadcast an SSE event to:
+ *  1) all registered SSE responses (registerClient)
+ *  2) any in-process subscribers (subscribe)
  */
 function broadcast(streamerId, eventName, payload) {
   const key = String(streamerId);
 
-  // 1) SSE clients
-  const sseSet = clientsByStreamerId.get(key);
-  if (sseSet && sseSet.size) {
-    const frame =
-      `event: ${eventName}\n` +
-      `data: ${JSON.stringify(payload)}\n\n`;
-
-    for (const res of sseSet) {
+  // 1) SSE responses
+  const resSet = clientsByStreamerId.get(key);
+  if (resSet && resSet.size) {
+    const data = JSON.stringify(payload ?? {});
+    for (const res of Array.from(resSet)) {
       try {
-        res.write(frame);
+        res.write(`event: ${eventName}\n`);
+        res.write(`data: ${data}\n\n`);
       } catch (_) {
-        try { sseSet.delete(res); } catch {}
+        // if write fails, drop it
+        try { resSet.delete(res); } catch (_) {}
       }
     }
-
-    if (sseSet.size === 0) clientsByStreamerId.delete(key);
+    if (resSet.size === 0) clientsByStreamerId.delete(key);
   }
 
-  // 2) In-process listeners
+  // 2) Local listeners
   const fnSet = listenersByStreamer.get(key);
   if (fnSet && fnSet.size) {
     for (const fn of fnSet) {
