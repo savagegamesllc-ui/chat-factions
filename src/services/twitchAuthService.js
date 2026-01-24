@@ -3,7 +3,17 @@
 
 const crypto = require('crypto');
 const { prisma } = require('../db/prisma');
-const { config } = require('../config/env');
+
+// Your env module varies across your codebase. We’ll safely support both:
+// - { config: {...} } (your current)
+/// - { env: {...} }   (your Fastify-side style)
+let envMod = {};
+try {
+  envMod = require('../config/env');
+} catch {
+  envMod = {};
+}
+const config = envMod?.config || envMod?.env || {};
 
 // Node 18+ has fetch; otherwise use node-fetch.
 let fetchFn = global.fetch;
@@ -14,10 +24,26 @@ async function getFetch() {
   return fetchFn;
 }
 
+// ---------
+// Helpers
+// ---------
+
+function readCfg(...keys) {
+  for (const k of keys) {
+    const v = config?.[k] ?? process.env?.[k];
+    if (v !== undefined && v !== null && String(v).trim() !== '') return String(v);
+  }
+  return '';
+}
+
 function assertEnv() {
-  if (!config.twitchClientId) throw new Error('TWITCH_CLIENT_ID missing');
-  if (!config.twitchClientSecret) throw new Error('TWITCH_CLIENT_SECRET missing');
-  if (!config.twitchRedirectUri) throw new Error('TWITCH_REDIRECT_URI missing');
+  const cid = readCfg('twitchClientId', 'TWITCH_CLIENT_ID');
+  const sec = readCfg('twitchClientSecret', 'TWITCH_CLIENT_SECRET');
+  const red = readCfg('twitchRedirectUri', 'TWITCH_REDIRECT_URI');
+
+  if (!cid) throw new Error('TWITCH_CLIENT_ID missing');
+  if (!sec) throw new Error('TWITCH_CLIENT_SECRET missing');
+  if (!red) throw new Error('TWITCH_REDIRECT_URI missing');
 }
 
 function normalizeScopes(scope) {
@@ -40,17 +66,52 @@ function newOverlayToken() {
   return crypto.randomBytes(24).toString('hex');
 }
 
+// ✅ MISSING BEFORE: used by authRoutes.js
+function randomToken(bytes = 16) {
+  const n = Number(bytes) || 16;
+  return crypto.randomBytes(n).toString('hex');
+}
+
+// ✅ MISSING BEFORE: used by authRoutes.js
+function buildTwitchAuthorizeUrl(state) {
+  assertEnv();
+
+  const clientId = readCfg('twitchClientId', 'TWITCH_CLIENT_ID');
+  const redirectUri = readCfg('twitchRedirectUri', 'TWITCH_REDIRECT_URI');
+
+  // You can tune scopes later; these are typical for chat + user identity.
+  // - user:read:email lets you get email when available
+  // - chat:read / chat:edit are common for bot/chat tools (depends on your use)
+  const scopeStr =
+    readCfg('twitchScopes', 'TWITCH_SCOPES') ||
+    'user:read:email chat:read chat:edit';
+
+  const u = new URL('https://id.twitch.tv/oauth2/authorize');
+  u.searchParams.set('client_id', clientId);
+  u.searchParams.set('redirect_uri', redirectUri);
+  u.searchParams.set('response_type', 'code');
+  u.searchParams.set('scope', scopeStr);
+  u.searchParams.set('state', String(state || ''));
+  // Optional: force showing the auth prompt
+  // u.searchParams.set('force_verify', 'true');
+
+  return u.toString();
+}
+
 /**
  * Fetch Twitch user from Helix using access token.
  * Returns { twitchUserId, login, displayName, email }
  */
 async function fetchTwitchUser(accessToken) {
+  assertEnv();
   const fetch = await getFetch();
+
+  const clientId = readCfg('twitchClientId', 'TWITCH_CLIENT_ID');
 
   const resp = await fetch('https://api.twitch.tv/helix/users', {
     method: 'GET',
     headers: {
-      'Client-Id': String(config.twitchClientId),
+      'Client-Id': clientId,
       Authorization: `Bearer ${accessToken}`,
     },
   });
@@ -125,12 +186,16 @@ async function exchangeCodeForToken(code) {
   assertEnv();
   const fetch = await getFetch();
 
+  const clientId = readCfg('twitchClientId', 'TWITCH_CLIENT_ID');
+  const clientSecret = readCfg('twitchClientSecret', 'TWITCH_CLIENT_SECRET');
+  const redirectUri = readCfg('twitchRedirectUri', 'TWITCH_REDIRECT_URI');
+
   const body = new URLSearchParams({
-    client_id: String(config.twitchClientId),
-    client_secret: String(config.twitchClientSecret),
+    client_id: clientId,
+    client_secret: clientSecret,
     code: String(code),
     grant_type: 'authorization_code',
-    redirect_uri: String(config.twitchRedirectUri),
+    redirect_uri: redirectUri,
   });
 
   const resp = await fetch('https://id.twitch.tv/oauth2/token', {
@@ -163,76 +228,50 @@ async function exchangeCodeForToken(code) {
 }
 
 async function handleOAuthCallback(code) {
-  // 1) Exchange code -> tokens
   const tokenBundle = await exchangeCodeForToken(code);
-
-  // 2) Fetch user from Helix
   const twitchUser = await fetchTwitchUser(tokenBundle.accessToken);
-
-  // 3) Upsert Streamer + store tokens
   const streamer = await upsertStreamerFromTwitchUser(twitchUser, tokenBundle);
-
   return { streamer, twitchUser, tokenBundle };
 }
 
+/**
+ * Legacy name used by authRoutes.js
+ * Accepts either raw twitch token JSON or our tokenBundle shape.
+ */
+async function saveTwitchTokensForStreamer(streamerId, tokenJson) {
+  if (!streamerId) throw new Error('Missing streamerId');
+
+  const access = tokenJson?.access_token ?? tokenJson?.accessToken ?? null;
+  const refresh = tokenJson?.refresh_token ?? tokenJson?.refreshToken ?? null;
+
+  const expiresIn = tokenJson?.expires_in ?? null;
+  const expiresAt =
+    tokenJson?.expiresAt ??
+    (expiresIn ? new Date(Date.now() + Number(expiresIn) * 1000) : null);
+
+  const scopes = tokenJson?.scope ?? tokenJson?.scopes ?? null;
+  const scopeArr = normalizeScopes(scopes);
+
+  return prisma.streamer.update({
+    where: { id: String(streamerId) },
+    data: {
+      twitchAccessToken: access,
+      twitchRefreshToken: refresh,
+      twitchTokenExpiresAt: expiresAt,
+      twitchScopes: scopeArr,
+      twitchTokenUpdatedAt: new Date(),
+    },
+  });
+}
+
 module.exports = {
-  // ✅ needed by authRoutes.js
   randomToken,
   buildTwitchAuthorizeUrl,
 
-  // ✅ unified flow (optional to use)
   handleOAuthCallback,
 
-  // ✅ legacy exports (authRoutes.js currently uses these)
   exchangeCodeForToken,
   fetchTwitchUser,
   upsertStreamerFromTwitchUser,
-
-  // ✅ keep this name because your authRoutes.js calls it
-  saveTwitchTokensForStreamer: async function saveTwitchTokensForStreamer(streamerId, tokenJson) {
-    if (!streamerId) throw new Error('Missing streamerId');
-
-    // tokenJson may be in either shape depending on caller
-    const access =
-      tokenJson?.access_token ??
-      tokenJson?.accessToken ??
-      null;
-
-    const refresh =
-      tokenJson?.refresh_token ??
-      tokenJson?.refreshToken ??
-      null;
-
-    const expiresIn =
-      tokenJson?.expires_in ??
-      null;
-
-    const expiresAt =
-      tokenJson?.expiresAt ??
-      (expiresIn ? new Date(Date.now() + Number(expiresIn) * 1000) : null);
-
-    const scopes =
-      tokenJson?.scope ??
-      tokenJson?.scopes ??
-      null;
-
-    // Normalize scope to array
-    const scopeArr = Array.isArray(scopes)
-      ? scopes.map(String).filter(Boolean)
-      : (typeof scopes === 'string'
-          ? scopes.split(/\s+/).map((s) => s.trim()).filter(Boolean)
-          : []);
-
-    // NOTE: requires prisma + schema fields you already have
-    return prisma.streamer.update({
-      where: { id: String(streamerId) },
-      data: {
-        twitchAccessToken: access,
-        twitchRefreshToken: refresh,
-        twitchTokenExpiresAt: expiresAt,
-        twitchScopes: scopeArr,
-        twitchTokenUpdatedAt: new Date(),
-      },
-    });
-  },
+  saveTwitchTokensForStreamer,
 };
