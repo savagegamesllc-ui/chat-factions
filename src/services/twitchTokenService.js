@@ -4,13 +4,16 @@
 const { prisma } = require('../db/prisma');
 const { config } = require('../config/env');
 
-/**
- * Normalize the "scope" value from Twitch into an array of strings.
- * Twitch may return scope as:
- * - array: ["user:read:email"]
- * - string: "user:read:email chat:read"
- * - missing/undefined
- */
+// Node 18+ has global fetch. Older Node needs node-fetch.
+let fetchFn = global.fetch;
+async function getFetch() {
+  if (fetchFn) return fetchFn;
+  // Lazy import so this file works even if node-fetch isn't installed in dev.
+  const mod = await import('node-fetch');
+  fetchFn = mod.default;
+  return fetchFn;
+}
+
 function normalizeScopes(scope) {
   if (!scope) return [];
   if (Array.isArray(scope)) return scope.map(String).filter(Boolean);
@@ -20,17 +23,32 @@ function normalizeScopes(scope) {
     .filter(Boolean);
 }
 
-function makeHttpError(statusCode, message) {
-  const err = new Error(message || 'Request failed');
-  err.statusCode = statusCode || 500;
-  return err;
+function httpErr(statusCode, message) {
+  const e = new Error(message || 'Request failed');
+  e.statusCode = statusCode || 500;
+  return e;
+}
+
+function assertTwitchEnv() {
+  // Your twitchAuthService.js expects these:
+  // config.twitchClientId, config.twitchClientSecret, config.twitchRedirectUri
+  if (!config.twitchClientId) throw httpErr(500, 'TWITCH_CLIENT_ID missing');
+  if (!config.twitchClientSecret) throw httpErr(500, 'TWITCH_CLIENT_SECRET missing');
+  if (!config.twitchRedirectUri) throw httpErr(500, 'TWITCH_REDIRECT_URI missing');
 }
 
 /**
- * Refresh Twitch access token using the stored refresh token.
- * Updates Streamer.twitchAccessToken, twitchRefreshToken, twitchTokenExpiresAt, twitchScopes, twitchTokenUpdatedAt.
+ * Refresh Twitch token using the refresh token stored on Streamer.
+ * Updates Streamer fields:
+ * - twitchAccessToken
+ * - twitchRefreshToken
+ * - twitchTokenExpiresAt
+ * - twitchScopes (Json array)
+ * - twitchTokenUpdatedAt
  */
 async function refreshTwitchToken(streamerId) {
+  assertTwitchEnv();
+
   const streamer = await prisma.streamer.findUnique({
     where: { id: streamerId },
     select: {
@@ -38,21 +56,18 @@ async function refreshTwitchToken(streamerId) {
     },
   });
 
-  if (!streamer || !streamer.twitchRefreshToken) {
-    throw makeHttpError(400, 'No Twitch refresh token available.');
+  if (!streamer?.twitchRefreshToken) {
+    throw httpErr(400, 'No Twitch refresh token available.');
   }
+
+  const fetch = await getFetch();
 
   const body = new URLSearchParams({
     grant_type: 'refresh_token',
     refresh_token: String(streamer.twitchRefreshToken),
-    client_id: String(config.twitchClientId || ''),
-    client_secret: String(config.twitchClientSecret || ''),
+    client_id: String(config.twitchClientId),
+    client_secret: String(config.twitchClientSecret),
   });
-
-  // Basic env guard (helps avoid confusing 500s)
-  if (!config.twitchClientId || !config.twitchClientSecret) {
-    throw makeHttpError(500, 'Server is missing TWITCH_CLIENT_ID or TWITCH_CLIENT_SECRET.');
-  }
 
   const resp = await fetch('https://id.twitch.tv/oauth2/token', {
     method: 'POST',
@@ -69,30 +84,28 @@ async function refreshTwitchToken(streamerId) {
       json?.error ||
       resp.statusText ||
       `HTTP ${resp.status}`;
-    throw makeHttpError(400, `Twitch refresh failed: ${msg}`);
+    throw httpErr(400, `Twitch refresh failed: ${msg}`);
   }
 
   const accessToken = json?.access_token ? String(json.access_token) : '';
   if (!accessToken) {
-    throw makeHttpError(500, 'Twitch refresh succeeded but no access_token was returned.');
+    throw httpErr(500, 'Twitch refresh succeeded but no access_token returned.');
   }
 
-  const expiresIn = Number(json.expires_in || 0);
-  const twitchTokenExpiresAt = expiresIn
-    ? new Date(Date.now() + expiresIn * 1000)
-    : null;
+  const expiresIn = Number(json?.expires_in || 0);
+  const expiresAt = expiresIn ? new Date(Date.now() + expiresIn * 1000) : null;
 
-  const scopesArr = normalizeScopes(json.scope);
+  const scopes = normalizeScopes(json?.scope);
 
   await prisma.streamer.update({
     where: { id: streamerId },
     data: {
       twitchAccessToken: accessToken,
-      twitchRefreshToken: json.refresh_token
+      twitchRefreshToken: json?.refresh_token
         ? String(json.refresh_token)
         : streamer.twitchRefreshToken,
-      twitchTokenExpiresAt,
-      twitchScopes: scopesArr, // Json field -> store array
+      twitchTokenExpiresAt: expiresAt,
+      twitchScopes: scopes,
       twitchTokenUpdatedAt: new Date(),
     },
   });
@@ -101,38 +114,33 @@ async function refreshTwitchToken(streamerId) {
 }
 
 /**
- * Return a valid access token for a streamer.
- * Refreshes if the token is missing expiry or expiring soon.
- *
- * Refresh behavior:
- * - If expiresAt exists and is within 2 minutes -> refresh
- * - If expiresAt is missing but we have refresh token -> DO NOT force refresh (keeps stable)
+ * Returns a valid access token for the streamer.
+ * If token expires within 2 minutes, refreshes automatically.
  */
 async function getValidAccessToken(streamerId) {
   const streamer = await prisma.streamer.findUnique({
     where: { id: streamerId },
     select: {
       twitchAccessToken: true,
-      twitchTokenExpiresAt: true,
       twitchRefreshToken: true,
+      twitchTokenExpiresAt: true,
     },
   });
 
-  if (!streamer || !streamer.twitchAccessToken) {
-    throw makeHttpError(400, 'No Twitch access token available.');
+  if (!streamer?.twitchAccessToken) {
+    throw httpErr(400, 'No Twitch access token available.');
   }
 
   const token = String(streamer.twitchAccessToken);
-  const expiresAtMs = streamer.twitchTokenExpiresAt
+  const expMs = streamer.twitchTokenExpiresAt
     ? new Date(streamer.twitchTokenExpiresAt).getTime()
     : 0;
 
-  // Refresh if expiring within 2 minutes
-  if (expiresAtMs) {
-    const now = Date.now();
-    if (expiresAtMs - now < 2 * 60 * 1000) {
-      // If refresh token missing, we can still return the token; Twitch may accept briefly.
-      if (!streamer.twitchRefreshToken) return token;
+  // Refresh if expiring soon
+  if (expMs) {
+    const msLeft = expMs - Date.now();
+    if (msLeft < 2 * 60 * 1000) {
+      if (!streamer.twitchRefreshToken) return token; // best effort
       return refreshTwitchToken(streamerId);
     }
   }
