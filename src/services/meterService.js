@@ -42,22 +42,19 @@ async function addHype(streamerId, factionKey, delta, source = 'chat', meta = {}
     throw e;
   }
 
-  // Ensure meter row exists
-  const meterRow = await prisma.sessionFactionMeter.upsert({
+  const row = await prisma.sessionFactionMeter.upsert({
     where: { sessionId_factionId: { sessionId: session.id, factionId: faction.id } },
     create: { sessionId: session.id, factionId: faction.id, meter: 0 },
     update: {},
   });
 
-  // Apply delta (clamp at 0 min)
-  const next = Math.max(0, Number(meterRow.meter || 0) + Number(delta || 0));
+  const next = Math.max(0, Number(row.meter || 0) + Number(delta || 0));
 
   await prisma.sessionFactionMeter.update({
-    where: { id: meterRow.id },
+    where: { id: row.id },
     data: { meter: next },
   });
 
-  // Analytics log
   await prisma.eventLog.create({
     data: {
       streamerId: String(streamerId),
