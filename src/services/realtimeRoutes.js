@@ -2,61 +2,41 @@
 'use strict';
 
 const express = require('express');
-const { resolveOverlayByToken } = require('../services/overlayRenderService');
-const { registerClient } = require('../services/realtimeHub');
-const { getMetersSnapshot } = require('../services/meterService');
+const { realtimeHub } = require('../services/realtimeHub');
 
-function openSse(res) {
-  res.status(200);
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache, no-transform');
-  res.setHeader('Connection', 'keep-alive');
-  res.setHeader('X-Accel-Buffering', 'no'); // nginx: don't buffer SSE
-  res.write(`: connected\n\n`);
-}
+/**
+ * Routes mounted under /admin (or whatever prefix you use).
+ * Provides:
+ *   GET  /admin/api/realtime/ping
+ *   GET  /admin/api/realtime/sse
+ *   POST /admin/api/realtime/push   (debug helper)
+ */
+const router = express.Router();
 
-function realtimeRoutes() {
-  const router = express.Router();
+// Simple ping (useful behind nginx)
+router.get('/api/realtime/ping', (req, res) => {
+  res.json({ ok: true, ts: new Date().toISOString() });
+});
 
-  router.get('/ping', (req, res) => {
-    res.json({ ok: true, ts: new Date().toISOString() });
-  });
+// SSE stream (requires streamer session)
+router.get('/api/realtime/sse', (req, res) => {
+  const streamerId = req.session?.streamerId;
+  if (!streamerId) return res.status(401).json({ error: 'Not authenticated' });
 
-  // Admin dashboard SSE (requires streamer session)
-  router.get('/sse', async (req, res) => {
-    const streamerId = req.session?.streamerId;
-    if (!streamerId) return res.status(401).json({ error: 'Not authenticated' });
+  // Let hub own the SSE wiring
+  realtimeHub.openSse(streamerId, req, res);
+});
 
-    openSse(res);
+// Debug endpoint: push an event to yourself (helps validate end-to-end)
+router.post('/api/realtime/push', express.json(), (req, res) => {
+  const streamerId = req.session?.streamerId;
+  if (!streamerId) return res.status(401).json({ error: 'Not authenticated' });
 
-    // register client for this streamer
-    registerClient(streamerId, res);
+  const type = String(req.body?.type || 'debug');
+  const payload = req.body?.payload ?? { ok: true };
 
-    // send initial snapshot
-    const snap = await getMetersSnapshot(streamerId);
-    res.write(`event: meters\n`);
-    res.write(`data: ${JSON.stringify(snap)}\n\n`);
-  });
+  realtimeHub.broadcast(streamerId, type, payload);
+  res.json({ ok: true });
+});
 
-  // Overlay SSE by overlay token (OBS overlay can subscribe without session)
-  router.get('/overlay/:token/sse', async (req, res) => {
-    const token = String(req.params.token || '').trim();
-    if (!token) return res.status(400).json({ error: 'Missing token' });
-
-    const resolved = await resolveOverlayByToken(token);
-    const streamerId = resolved?.streamer?.id;
-    if (!streamerId) return res.status(404).json({ error: 'Overlay not found' });
-
-    openSse(res);
-
-    registerClient(streamerId, res);
-
-    const snap = await getMetersSnapshot(streamerId);
-    res.write(`event: meters\n`);
-    res.write(`data: ${JSON.stringify(snap)}\n\n`);
-  });
-
-  return router;
-}
-
-module.exports = { realtimeRoutes };
+module.exports = { realtimeRoutes: router };
