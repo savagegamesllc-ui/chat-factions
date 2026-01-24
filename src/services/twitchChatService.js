@@ -1,45 +1,46 @@
+// src/services/twitchChatService.js
 'use strict';
 
-import tmi from 'tmi.js';
-import { prisma } from '../db/prisma.js';
-import { getValidAccessToken } from './twitchTokenService.js';
+const tmi = require('tmi.js');
+const { prisma } = require('../db/prisma');
+const { getValidAccessToken } = require('./twitchTokenService');
 
-const activeClients = new Map(); // streamerId -> tmi client
+// If you have these in your project, you can wire them back in later.
+// const { addHype, getMetersSnapshot } = require('./meterService');
+// const { broadcast } = require('./realtimeHub');
+// const { getOrCreateActiveSession } = require('./sessionService');
+// const { checkAndTouchCooldown } = require('./cooldownService');
+// const { getEffectiveChatConfig } = require('./chatConfigService');
 
-export async function startChatForStreamer(streamerId) {
-  if (!streamerId) {
-    const err = new Error('Missing streamerId');
-    err.statusCode = 400;
-    throw err;
-  }
+const clients = new Map(); // streamerId -> { client, channel }
 
-  // Prevent duplicate listeners
-  if (activeClients.has(streamerId)) {
-    return { ok: true, alreadyRunning: true };
-  }
-
-  // 🔑 THIS IS THE KEY FIX
-  const token = await getValidAccessToken(streamerId);
-
-  if (!token) {
-    const err = new Error('No Twitch access token available');
-    err.statusCode = 400;
-    throw err;
-  }
+async function startChatForStreamer(streamerId) {
+  if (clients.has(streamerId)) return { ok: true, already: true };
 
   const streamer = await prisma.streamer.findUnique({
     where: { id: streamerId },
-    select: { twitchLogin: true }
+    select: {
+      id: true,
+      twitchLogin: true,   // ⚠️ If your field is named differently, adjust here.
+      displayName: true,
+    },
   });
 
-  if (!streamer?.twitchLogin) {
-    const err = new Error('Streamer Twitch login not found');
-    err.statusCode = 400;
-    throw err;
+  if (!streamer || !streamer.twitchLogin) {
+    const e = new Error('Streamer Twitch login not found.');
+    e.statusCode = 400;
+    throw e;
+  }
+
+  const token = await getValidAccessToken(streamerId);
+  if (!token) {
+    const e = new Error('No Twitch access token available.');
+    e.statusCode = 400;
+    throw e;
   }
 
   const client = new tmi.Client({
-    options: { debug: false },
+    options: { debug: true },
     identity: {
       username: streamer.twitchLogin,
       password: `oauth:${token}`,
@@ -47,41 +48,54 @@ export async function startChatForStreamer(streamerId) {
     channels: [streamer.twitchLogin],
   });
 
-  try {
-    await client.connect();
-  } catch (e) {
-    console.error('[tmi.connect] failed', e);
-    throw new Error('Failed to connect to Twitch chat');
-  }
-
-  client.on('message', (channel, tags, message, self) => {
-    if (self) return;
-
-    // 🔥 This is where you emit to SSE / WS later
-    // realtimeHub.emitChatMessage(...)
+  client.on('notice', (channel, msgid, message) => {
+    console.log('[tmi notice]', { streamerId, channel, msgid, message });
   });
 
-  activeClients.set(streamerId, client);
+  client.on('connected', (addr, port) => {
+    console.log('[tmi connected]', { streamerId, addr, port, channel: streamer.twitchLogin });
+  });
 
-  return { ok: true };
-}
+  client.on('disconnected', (reason) => {
+    console.log('[tmi disconnected]', { streamerId, reason });
+    clients.delete(streamerId);
+  });
 
-export async function stopChatForStreamer(streamerId) {
-  const client = activeClients.get(streamerId);
-  if (!client) return { ok: true, notRunning: true };
+  // Keep message handler minimal for now
+  client.on('message', (channel, tags, message, self) => {
+    if (self) return;
+    // Later: parse commands and push into meters/realtimeHub
+  });
 
   try {
-    await client.disconnect();
-  } catch (e) {
-    console.warn('[tmi.disconnect] failed', e);
+    await client.connect();
+  } catch (err) {
+    console.error('[tmi connect] failed', err);
+    throw err instanceof Error ? err : new Error('tmi.connect failed');
   }
 
-  activeClients.delete(streamerId);
+  clients.set(streamerId, { client, channel: streamer.twitchLogin });
   return { ok: true };
 }
 
-export async function getChatStatus(streamerId) {
-  return {
-    running: activeClients.has(streamerId),
-  };
+async function stopChatForStreamer(streamerId) {
+  const entry = clients.get(streamerId);
+  if (!entry) return { ok: true, already: true };
+
+  try {
+    await entry.client.disconnect();
+  } catch (_) {}
+
+  clients.delete(streamerId);
+  return { ok: true };
 }
+
+function getChatStatus(streamerId) {
+  return { connected: clients.has(streamerId) };
+}
+
+module.exports = {
+  startChatForStreamer,
+  stopChatForStreamer,
+  getChatStatus,
+};
