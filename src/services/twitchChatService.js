@@ -4,6 +4,8 @@
 const tmi = require('tmi.js');
 const { prisma } = require('../db/prisma');
 const { getValidAccessToken } = require('./twitchTokenService');
+const { getEffectiveChatConfig } = require('./chatConfigService');
+
 
 const clients = new Map(); // streamerId -> { client, channel }
 
