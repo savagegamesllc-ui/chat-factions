@@ -25,6 +25,7 @@ const {
 
 function dashboardRoutes() {
   const router = express.Router();
+  router.get('/admin/dashboard', requireStreamer, (req, res) => res.redirect('/admin'));
 
   // --------------------
   // Streamer Dashboard Home

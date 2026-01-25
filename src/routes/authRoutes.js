@@ -2,38 +2,25 @@
 'use strict';
 
 const express = require('express');
-
 const {
   randomToken,
   buildTwitchAuthorizeUrl,
-  handleOAuthCallback, // ✅ NEW: single entrypoint (code -> tokens -> helix -> upsert)
+  handleOAuthCallback,
 } = require('../services/twitchAuthService');
 
 function authRoutes() {
   const router = express.Router();
 
-  // --------------------
-  // Streamer Login (Twitch OAuth)
-  // --------------------
-
-  // This is where requireStreamer redirects if not logged in (locked contract)
   router.get('/admin/login', (req, res) => {
-    if (req.session && req.session.streamerId) return res.redirect('/admin/dashboard');
-
-    return res.render('pages/streamer/login', {
-      title: 'Streamer Login',
-      error: null,
-    });
+    if (req.session && req.session.streamerId) return res.redirect('/admin'); // ✅ FIX
+    return res.render('pages/streamer/login', { title: 'Streamer Login', error: null });
   });
 
   router.get('/admin/auth/twitch', (req, res, next) => {
     try {
-      // CSRF state token stored in session
       const state = randomToken(16);
       req.session.twitchOAuthState = state;
-
-      const url = buildTwitchAuthorizeUrl(state);
-      return res.redirect(url);
+      return res.redirect(buildTwitchAuthorizeUrl(state));
     } catch (err) {
       return next(err);
     }
@@ -50,7 +37,6 @@ function authRoutes() {
         });
       }
 
-      // Verify state (CSRF protection)
       const expectedState = req.session.twitchOAuthState;
       delete req.session.twitchOAuthState;
 
@@ -68,11 +54,6 @@ function authRoutes() {
         });
       }
 
-      // ✅ Single atomic flow:
-      // - exchange code -> token bundle
-      // - helix /users -> twitch user
-      // - upsert streamer
-      // - persist tokens on streamer row
       const result = await handleOAuthCallback(String(code));
       const streamer = result?.streamer;
 
@@ -83,16 +64,14 @@ function authRoutes() {
         });
       }
 
-      // ✅ Locked contract: store ONE session key
       req.session.streamerId = streamer.id;
 
-      return res.redirect('/admin/dashboard');
+      return res.redirect('/admin'); // ✅ FIX
     } catch (err) {
       return next(err);
     }
   });
 
-  // Streamer logout (clears streamer session key)
   router.post('/admin/logout', (req, res) => {
     if (req.session) {
       req.session.streamerId = null;
@@ -101,11 +80,8 @@ function authRoutes() {
     return res.redirect('/admin/login');
   });
 
-  // Keep your generic logout if you want
   router.post('/logout', (req, res) => {
-    req.session.destroy(() => {
-      res.redirect('/');
-    });
+    req.session.destroy(() => res.redirect('/'));
   });
 
   return router;
