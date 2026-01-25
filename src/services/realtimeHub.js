@@ -2,61 +2,87 @@
 'use strict';
 
 /**
- * SSE hub:
- * - clientsByStreamer: streamerId -> Set(res)
- * - broadcast(streamerId, event, data): pushes SSE
+ * Minimal SSE hub.
+ * - Keeps a Set of open SSE responses per streamerId
+ * - Allows broadcasting events to all connected clients for that streamerId
  */
 
-const clientsByStreamer = new Map();
+const clientsByStreamer = new Map(); // streamerId -> Set(res)
 
 function ensureSet(streamerId) {
-  const key = String(streamerId || '');
-  if (!key) return null;
-  if (!clientsByStreamer.has(key)) clientsByStreamer.set(key, new Set());
-  return clientsByStreamer.get(key);
+  const key = String(streamerId);
+  let set = clientsByStreamer.get(key);
+  if (!set) {
+    set = new Set();
+    clientsByStreamer.set(key, set);
+  }
+  return set;
 }
 
-function registerSseClient(streamerId, res) {
-  const set = ensureSet(streamerId);
-  if (!set) return () => {};
+function safeWrite(res, chunk) {
+  try {
+    res.write(chunk);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
+function sseFormat(eventName, data) {
+  const payload = data === undefined ? null : data;
+  return `event: ${eventName}\ndata: ${JSON.stringify(payload)}\n\n`;
+}
+
+function registerClient(streamerId, res) {
+  const set = ensureSet(streamerId);
   set.add(res);
 
-  // Clean up on disconnect
+  // If the socket closes, remove it
   res.on('close', () => {
-    try { set.delete(res); } catch {}
-    if (set.size === 0) clientsByStreamer.delete(String(streamerId));
+    unregisterClient(streamerId, res);
   });
 
-  return () => {
-    try { set.delete(res); } catch {}
-    if (set.size === 0) clientsByStreamer.delete(String(streamerId));
+  return {
+    count: set.size,
   };
 }
 
-function writeSse(res, eventName, payload) {
-  // SSE format
-  res.write(`event: ${eventName}\n`);
-  res.write(`data: ${JSON.stringify(payload)}\n\n`);
+function unregisterClient(streamerId, res) {
+  const key = String(streamerId);
+  const set = clientsByStreamer.get(key);
+  if (!set) return { count: 0 };
+
+  set.delete(res);
+  if (set.size === 0) clientsByStreamer.delete(key);
+
+  return { count: set.size };
 }
 
-function broadcast(streamerId, eventName, payload) {
-  const set = clientsByStreamer.get(String(streamerId));
+function broadcast(streamerId, eventName, data) {
+  const key = String(streamerId);
+  const set = clientsByStreamer.get(key);
   if (!set || set.size === 0) return { ok: true, delivered: 0 };
 
+  const msg = sseFormat(eventName, data);
+
   let delivered = 0;
-  for (const res of set) {
-    try {
-      writeSse(res, eventName, payload);
-      delivered++;
-    } catch (_) {
-      try { set.delete(res); } catch {}
-    }
+  for (const res of Array.from(set)) {
+    const ok = safeWrite(res, msg);
+    if (ok) delivered += 1;
+    else unregisterClient(key, res);
   }
+
   return { ok: true, delivered };
 }
 
+function getClientCount(streamerId) {
+  const set = clientsByStreamer.get(String(streamerId));
+  return set ? set.size : 0;
+}
+
 module.exports = {
-  registerSseClient,
+  registerClient,
+  unregisterClient,
   broadcast,
+  getClientCount,
 };
