@@ -80,7 +80,7 @@ function realtimeRoutes() {
    * OVERLAY (token-based) SSE
    *   GET /overlay/:token/sse
    */
-  router.get('/overlay/:token/sse', async (req, res) => {
+  router.get('/overlays/:token/sse', async (req, res) => {
     const token = String(req.params.token || '').trim();
     if (!token) return res.status(400).json({ error: 'Missing token' });
 
