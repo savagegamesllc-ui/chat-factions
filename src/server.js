@@ -118,11 +118,12 @@ app.get('/', (req, res) => {
 app.use(authRoutes);
 app.use(dashboardRoutes);
 app.use(ownerRoutes);
+app.use(realtimeRoutes);
 app.use(overlayRoutes);
 app.use(billingRoutes);
 
 // Realtime + meters + chat
-app.use(realtimeRoutes);
+
 app.use(meterRoutes);
 app.use(chatRoutes);
 app.use(chatConfigRoutes);
