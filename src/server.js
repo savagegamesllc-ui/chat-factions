@@ -87,7 +87,7 @@ app.use(
     cookie: {
       httpOnly: true,
       sameSite: 'lax',
-      secure: true // set true behind HTTPS in production
+      secure: isProd // set true behind HTTPS in production
     }
   })
 );
