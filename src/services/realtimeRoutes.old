@@ -3,7 +3,7 @@
 
 const express = require('express');
 const { prisma } = require('../db/prisma');
-const { subscribe } = require('../services/realtimeHub');
+const { subscribe } = require('./realtimeHub');
 
 // Small helper to write SSE events safely
 function sseWrite(res, event, data) {
