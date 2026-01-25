@@ -122,7 +122,7 @@ app.use(overlayRoutes);
 app.use(billingRoutes);
 
 // Realtime + meters + chat
-app.use('/admin', realtimeRoutes);
+app.use(realtimeRoutes);
 app.use(meterRoutes);
 app.use(chatRoutes);
 app.use(chatConfigRoutes);
