@@ -3,14 +3,7 @@
 
 const express = require('express');
 const { prisma } = require('../db/prisma');
-
-// ✅ Load realtimeHub in a way that survives export shape changes
-const realtimeHub = require('../services/realtimeHub');
-const subscribe =
-  (realtimeHub && realtimeHub.subscribe) ||
-  (realtimeHub && realtimeHub.realtimeHub && realtimeHub.realtimeHub.subscribe) ||
-  (realtimeHub && realtimeHub.default && realtimeHub.default.subscribe) ||
-  null;
+const { subscribe } = require('../services/realtimeHub');
 
 function requireStreamer(req, res) {
   const streamerId = req.session?.streamerId;
@@ -21,119 +14,110 @@ function requireStreamer(req, res) {
   return streamerId;
 }
 
-function writeSse(res, eventName, payload) {
-  res.write(`event: ${eventName}\n`);
-  res.write(`data: ${JSON.stringify(payload ?? {})}\n\n`);
-}
-
 function startSse(res) {
   res.status(200);
   res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
   res.setHeader('Cache-Control', 'no-cache, no-transform');
   res.setHeader('Connection', 'keep-alive');
-  res.setHeader('X-Accel-Buffering', 'no'); // nginx: don't buffer
+  // nginx: do not buffer SSE
+  res.setHeader('X-Accel-Buffering', 'no');
 
   if (typeof res.flushHeaders === 'function') res.flushHeaders();
   res.write(': connected\n\n');
 }
 
+function writeSse(res, eventName, payload) {
+  res.write(`event: ${eventName}\n`);
+  res.write(`data: ${JSON.stringify(payload ?? {})}\n\n`);
+}
+
 function realtimeRoutes() {
   const router = express.Router();
 
+  // meters.js expects this
   router.get('/admin/api/realtime/status', (req, res) => {
     const streamerId = requireStreamer(req, res);
     if (!streamerId) return;
     res.json({ ok: true, streamerId, ts: new Date().toISOString() });
   });
 
-  router.get('/admin/api/realtime/sse', async (req, res) => {
-    const streamerId = requireStreamer(req, res);
-    if (!streamerId) return;
-
-    // ✅ DO NOT crash the process if subscribe is missing
-    if (typeof subscribe !== 'function') {
-      return res.status(500).json({
-        error: 'Realtime hub not wired (subscribe missing). Check realtimeHub exports.',
-      });
-    }
-
-    startSse(res);
-
-    let unsubscribe = null;
+  // meters.js expects this
+  router.get('/admin/api/realtime/sse', (req, res) => {
     try {
-      unsubscribe = subscribe(streamerId, (eventName, payload) => {
+      const streamerId = requireStreamer(req, res);
+      if (!streamerId) return;
+
+      if (typeof subscribe !== 'function') {
+        console.error('[realtimeRoutes] subscribe is not a function. Check services/realtimeHub exports.');
+        return res.status(500).json({ error: 'Realtime hub misconfigured (subscribe missing)' });
+      }
+
+      startSse(res);
+
+      const unsubscribe = subscribe(streamerId, (eventName, payload) => {
         try {
           writeSse(res, eventName, payload);
+        } catch (_) {
+          // ignore write errors; close handler will clean up
+        }
+      });
+
+      const t = setInterval(() => {
+        try {
+          writeSse(res, 'ping', { ok: true, ts: new Date().toISOString() });
         } catch (_) {}
+      }, 25000);
+
+      req.on('close', () => {
+        clearInterval(t);
+        try { unsubscribe(); } catch (_) {}
       });
     } catch (e) {
-      return res.status(500).json({
-        error: 'Failed to subscribe realtime hub',
-        detail: e?.message || String(e),
-      });
+      console.error('[realtimeRoutes] SSE handler crashed:', e);
+      // If headers were already sent, we can’t send JSON; just end.
+      try {
+        if (!res.headersSent) res.status(500).json({ error: 'SSE crashed' });
+        else res.end();
+      } catch (_) {}
     }
-
-    const t = setInterval(() => {
-      try {
-        writeSse(res, 'ping', { ok: true, ts: new Date().toISOString() });
-      } catch (_) {}
-    }, 25000);
-
-    req.on('close', () => {
-      clearInterval(t);
-      try {
-        if (typeof unsubscribe === 'function') unsubscribe();
-      } catch (_) {}
-    });
   });
 
+  // OBS/token-based SSE (nice to keep)
   router.get('/overlay/:token/sse', async (req, res) => {
-    const token = String(req.params.token || '').trim();
-    if (!token) return res.status(400).json({ error: 'Missing token' });
-
-    const streamer = await prisma.streamer.findUnique({
-      where: { overlayToken: token },
-      select: { id: true },
-    });
-
-    if (!streamer?.id) return res.status(404).json({ error: 'Invalid token' });
-
-    if (typeof subscribe !== 'function') {
-      return res.status(500).json({
-        error: 'Realtime hub not wired (subscribe missing). Check realtimeHub exports.',
-      });
-    }
-
-    startSse(res);
-
-    const streamerId = streamer.id;
-
-    let unsubscribe = null;
     try {
-      unsubscribe = subscribe(streamerId, (eventName, payload) => {
-        try {
-          writeSse(res, eventName, payload);
-        } catch (_) {}
+      const token = String(req.params.token || '').trim();
+      if (!token) return res.status(400).json({ error: 'Missing token' });
+
+      const streamer = await prisma.streamer.findUnique({
+        where: { overlayToken: token },
+        select: { id: true },
+      });
+
+      if (!streamer?.id) return res.status(404).json({ error: 'Invalid token' });
+
+      startSse(res);
+
+      const streamerId = streamer.id;
+
+      const unsubscribe = subscribe(streamerId, (eventName, payload) => {
+        try { writeSse(res, eventName, payload); } catch (_) {}
+      });
+
+      const t = setInterval(() => {
+        try { writeSse(res, 'ping', { ok: true, ts: new Date().toISOString() }); } catch (_) {}
+      }, 25000);
+
+      req.on('close', () => {
+        clearInterval(t);
+        try { unsubscribe(); } catch (_) {}
       });
     } catch (e) {
-      return res.status(500).json({
-        error: 'Failed to subscribe realtime hub',
-        detail: e?.message || String(e),
-      });
+      console.error('[realtimeRoutes] overlay SSE crashed:', e);
+      try {
+        if (!res.headersSent) res.status(500).json({ error: 'SSE crashed' });
+        else res.end();
+      } catch (_) {}
     }
-
-    const t = setInterval(() => {
-      try {
-        writeSse(res, 'ping', { ok: true, ts: new Date().toISOString() });
-      } catch (_) {}
-    }, 25000);
-
-    req.on('close', () => {
-      clearInterval(t);
-      try {
-        if (typeof unsubscribe === 'function') unsubscribe();
-      } catch (_) {}
-    });
   });
 
   return router;
