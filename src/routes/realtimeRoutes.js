@@ -3,7 +3,14 @@
 
 const express = require('express');
 const { prisma } = require('../db/prisma');
-const { subscribe } = require('../services/realtimeHub');
+
+// ✅ Load realtimeHub in a way that survives export shape changes
+const realtimeHub = require('../services/realtimeHub');
+const subscribe =
+  (realtimeHub && realtimeHub.subscribe) ||
+  (realtimeHub && realtimeHub.realtimeHub && realtimeHub.realtimeHub.subscribe) ||
+  (realtimeHub && realtimeHub.default && realtimeHub.default.subscribe) ||
+  null;
 
 function requireStreamer(req, res) {
   const streamerId = req.session?.streamerId;
@@ -15,10 +22,6 @@ function requireStreamer(req, res) {
 }
 
 function writeSse(res, eventName, payload) {
-  // SSE format:
-  // event: name
-  // data: {...}
-  // <blank line>
   res.write(`event: ${eventName}\n`);
   res.write(`data: ${JSON.stringify(payload ?? {})}\n\n`);
 }
@@ -28,29 +31,15 @@ function startSse(res) {
   res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
   res.setHeader('Cache-Control', 'no-cache, no-transform');
   res.setHeader('Connection', 'keep-alive');
-  // Helps nginx not buffer SSE
-  res.setHeader('X-Accel-Buffering', 'no');
+  res.setHeader('X-Accel-Buffering', 'no'); // nginx: don't buffer
 
-  // Flush headers immediately
   if (typeof res.flushHeaders === 'function') res.flushHeaders();
-
-  // Comment line keeps some proxies happy
   res.write(': connected\n\n');
 }
 
 function realtimeRoutes() {
   const router = express.Router();
 
-  /**
-   * ============================
-   * ADMIN (session-based) SSE
-   * ============================
-   * meters.js expects these:
-   *   GET /admin/api/realtime/sse
-   *   GET /admin/api/realtime/status
-   *
-   * NOTE: server.js mounts routes at root, so these are exact paths.
-   */
   router.get('/admin/api/realtime/status', (req, res) => {
     const streamerId = requireStreamer(req, res);
     if (!streamerId) return;
@@ -61,18 +50,29 @@ function realtimeRoutes() {
     const streamerId = requireStreamer(req, res);
     if (!streamerId) return;
 
+    // ✅ DO NOT crash the process if subscribe is missing
+    if (typeof subscribe !== 'function') {
+      return res.status(500).json({
+        error: 'Realtime hub not wired (subscribe missing). Check realtimeHub exports.',
+      });
+    }
+
     startSse(res);
 
-    // Subscribe this connection to realtimeHub for this streamer
-    const unsubscribe = subscribe(streamerId, (eventName, payload) => {
-      try {
-        writeSse(res, eventName, payload);
-      } catch (_) {
-        // ignore write errors; close handler will clean up
-      }
-    });
+    let unsubscribe = null;
+    try {
+      unsubscribe = subscribe(streamerId, (eventName, payload) => {
+        try {
+          writeSse(res, eventName, payload);
+        } catch (_) {}
+      });
+    } catch (e) {
+      return res.status(500).json({
+        error: 'Failed to subscribe realtime hub',
+        detail: e?.message || String(e),
+      });
+    }
 
-    // Heartbeat ping every 25s (prevents idle timeouts)
     const t = setInterval(() => {
       try {
         writeSse(res, 'ping', { ok: true, ts: new Date().toISOString() });
@@ -81,17 +81,12 @@ function realtimeRoutes() {
 
     req.on('close', () => {
       clearInterval(t);
-      try { unsubscribe(); } catch (_) {}
+      try {
+        if (typeof unsubscribe === 'function') unsubscribe();
+      } catch (_) {}
     });
   });
 
-  /**
-   * ============================
-   * OVERLAY (token-based) SSE
-   * ============================
-   * Useful for OBS overlay clients that only have the overlayToken.
-   *   GET /overlay/:token/sse
-   */
   router.get('/overlay/:token/sse', async (req, res) => {
     const token = String(req.params.token || '').trim();
     if (!token) return res.status(400).json({ error: 'Missing token' });
@@ -103,15 +98,29 @@ function realtimeRoutes() {
 
     if (!streamer?.id) return res.status(404).json({ error: 'Invalid token' });
 
+    if (typeof subscribe !== 'function') {
+      return res.status(500).json({
+        error: 'Realtime hub not wired (subscribe missing). Check realtimeHub exports.',
+      });
+    }
+
     startSse(res);
 
     const streamerId = streamer.id;
 
-    const unsubscribe = subscribe(streamerId, (eventName, payload) => {
-      try {
-        writeSse(res, eventName, payload);
-      } catch (_) {}
-    });
+    let unsubscribe = null;
+    try {
+      unsubscribe = subscribe(streamerId, (eventName, payload) => {
+        try {
+          writeSse(res, eventName, payload);
+        } catch (_) {}
+      });
+    } catch (e) {
+      return res.status(500).json({
+        error: 'Failed to subscribe realtime hub',
+        detail: e?.message || String(e),
+      });
+    }
 
     const t = setInterval(() => {
       try {
@@ -121,19 +130,11 @@ function realtimeRoutes() {
 
     req.on('close', () => {
       clearInterval(t);
-      try { unsubscribe(); } catch (_) {}
+      try {
+        if (typeof unsubscribe === 'function') unsubscribe();
+      } catch (_) {}
     });
   });
-
-  /**
-   * ============================
-   * Optional: External event ingestion (token-based)
-   * ============================
-   * Keep these if you already use them.
-   * Example: POST /api/events/hype (your game triggers, etc.)
-   *
-   * If you don’t need these here, you can remove them.
-   */
 
   return router;
 }
