@@ -105,7 +105,7 @@ function makeApi({ streamerToken }) {
   }
 
   // Real SSE feed
-  const sseUrl = `/overlays/sse?token=${encodeURIComponent(streamerToken)}`;
+  const sseUrl = `/overlays/${encodeURIComponent(token)}/sse`;
   const es = new EventSource(sseUrl);
 
   es.addEventListener('meters', (ev) => {
