@@ -2,85 +2,127 @@
 'use strict';
 
 const express = require('express');
-const { registerClient, unregisterClient, broadcast, getClientCount } = require('../services/realtimeHub');
+const { prisma } = require('../db/prisma');
+const { subscribe } = require('../services/realtimeHub');
 
-function requireStreamer(req, res, next) {
+// Small helper to write SSE events safely
+function sseWrite(res, event, data) {
+  if (event) res.write(`event: ${event}\n`);
+  res.write(`data: ${JSON.stringify(data ?? {})}\n\n`);
+}
+
+function setSseHeaders(res) {
+  res.status(200);
+  res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Connection', 'keep-alive');
+  // If you're behind nginx, disabling buffering helps SSE a LOT:
+  res.setHeader('X-Accel-Buffering', 'no');
+
+  if (typeof res.flushHeaders === 'function') res.flushHeaders();
+}
+
+function requireStreamerSession(req, res) {
   const streamerId = req.session?.streamerId;
-  if (!streamerId) return res.status(401).json({ error: 'Not authenticated' });
-  req.streamerId = streamerId;
-  next();
+  if (!streamerId) {
+    res.status(401).json({ error: 'Not authenticated' });
+    return null;
+  }
+  return String(streamerId);
 }
 
 function realtimeRoutes() {
   const router = express.Router();
 
   /**
-   * SSE endpoint used by meters.js (same-origin):
-   *   GET /admin/api/realtime/sse
+   * ===========================
+   * ADMIN (session) SSE
+   * ===========================
+   * Used by streamer dashboard (meters UI, etc.)
+   * GET /admin/api/realtime/sse
    */
-  router.get('/admin/api/realtime/sse', requireStreamer, (req, res) => {
-    const streamerId = req.streamerId;
+  router.get('/admin/api/realtime/sse', async (req, res) => {
+    const streamerId = requireStreamerSession(req, res);
+    if (!streamerId) return;
 
-    // SSE headers
-    res.status(200);
-    res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
-    res.setHeader('Cache-Control', 'no-cache, no-transform');
-    res.setHeader('Connection', 'keep-alive');
+    setSseHeaders(res);
 
-    // Important for Nginx: prevents buffering SSE
-    res.setHeader('X-Accel-Buffering', 'no');
+    // Initial hello so browser knows it's connected
+    sseWrite(res, 'hello', { ok: true, streamerId, ts: new Date().toISOString() });
 
-    // If compression middleware exists, this helps avoid buffering
-    res.flushHeaders?.();
-
-    // Register this client
-    const info = registerClient(streamerId, res);
-
-    // Initial hello event so the browser knows it's live
-    res.write(`event: hello\ndata: ${JSON.stringify({ ok: true, ts: new Date().toISOString(), clients: info.count })}\n\n`);
-
-    // Keepalive ping every 25s so proxies don’t kill idle SSE
-    const keepalive = setInterval(() => {
+    // Subscribe to hub broadcasts for this streamerId
+    const unsub = subscribe(streamerId, (eventName, payload) => {
       try {
-        res.write(`event: ping\ndata: ${JSON.stringify({ ts: Date.now() })}\n\n`);
-      } catch {
-        // If write fails, close will fire and unregister happens there too
-        clearInterval(keepalive);
+        sseWrite(res, eventName || 'message', payload);
+      } catch (_) {
+        // ignore write failures; close handler will clean up
       }
-    }, 25000);
+    });
 
-    // Cleanup
-    res.on('close', () => {
-      clearInterval(keepalive);
-      unregisterClient(streamerId, res);
+    // Keepalive ping (prevents idle timeouts)
+    const ping = setInterval(() => {
+      try {
+        sseWrite(res, 'ping', { ts: new Date().toISOString() });
+      } catch (_) {}
+    }, 20000);
+
+    req.on('close', () => {
+      clearInterval(ping);
+      try { unsub(); } catch (_) {}
+      try { res.end(); } catch (_) {}
     });
   });
 
   /**
-   * Simple debug endpoint so you can verify session + route quickly:
-   *   GET /admin/api/realtime/status
+   * Quick sanity check
+   * GET /admin/api/realtime/status
    */
-  router.get('/admin/api/realtime/status', requireStreamer, (req, res) => {
-    const streamerId = req.streamerId;
-    res.json({
-      ok: true,
-      streamerId,
-      clients: getClientCount(streamerId),
-      ts: new Date().toISOString(),
-    });
+  router.get('/admin/api/realtime/status', (req, res) => {
+    const streamerId = requireStreamerSession(req, res);
+    if (!streamerId) return;
+    res.json({ ok: true, streamerId, ts: new Date().toISOString() });
   });
 
   /**
-   * Optional dev-only push route:
-   * POST /admin/api/realtime/dev/broadcast
-   * body: { event: "meters", data: {...} }
+   * ===========================
+   * OVERLAY (token) SSE
+   * ===========================
+   * Used by OBS overlay client
+   * GET /overlay/:token/sse
    */
-  router.post('/admin/api/realtime/dev/broadcast', requireStreamer, express.json(), (req, res) => {
-    const streamerId = req.streamerId;
-    const event = String(req.body?.event || 'message');
-    const data = req.body?.data ?? null;
-    const out = broadcast(streamerId, event, data);
-    res.json({ ok: true, ...out });
+  router.get('/overlay/:token/sse', async (req, res) => {
+    const token = String(req.params.token || '').trim();
+    if (!token) return res.status(400).json({ error: 'Missing token' });
+
+    const streamer = await prisma.streamer.findUnique({
+      where: { overlayToken: token },
+      select: { id: true },
+    });
+
+    if (!streamer) return res.status(404).json({ error: 'Invalid token' });
+
+    const streamerId = String(streamer.id);
+
+    setSseHeaders(res);
+    sseWrite(res, 'hello', { ok: true, streamerId, ts: new Date().toISOString() });
+
+    const unsub = subscribe(streamerId, (eventName, payload) => {
+      try {
+        sseWrite(res, eventName || 'message', payload);
+      } catch (_) {}
+    });
+
+    const ping = setInterval(() => {
+      try {
+        sseWrite(res, 'ping', { ts: new Date().toISOString() });
+      } catch (_) {}
+    }, 20000);
+
+    req.on('close', () => {
+      clearInterval(ping);
+      try { unsub(); } catch (_) {}
+      try { res.end(); } catch (_) {}
+    });
   });
 
   return router;
