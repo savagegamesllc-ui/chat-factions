@@ -1,11 +1,16 @@
-// public/overlays/styles/flameEdgeRock.js update
+// public/overlays/styles/flameEdgeRock.js
+// PRO Overlay: Flame Edge (Rock) + Dynamic Stem Audio (ROCKON001..005.wav)
+// - Uses StemPack engine: /public/overlays/audio/stemPack.js
+// - Audio reacts to hype (dynamic fade in/out) via setHype(h01)
+// - Keeps overlay modular (no SSE logic here; only api.onMeters)
+
 'use strict';
 
 import { createStemPack } from '/public/overlays/audio/stemPack.js';
 
 export const meta = {
-  styleKey: 'flameEdge',
-  name: 'Flame Edge',
+  styleKey: 'flameEdgeRock',
+  name: 'Flame Edge (Rock)',
   tier: 'PRO',
   controls: [
     { key: 'position', label: 'Position', type: 'select', default: 'bottom',
@@ -16,7 +21,7 @@ export const meta = {
     { key: 'baseThicknessPx', label: 'Base Thickness (px)', type: 'number', default: 10, min: 2, max: 60, step: 1 },
     { key: 'glowBlurPx', label: 'Glow Blur (px)', type: 'number', default: 6, min: 0, max: 30, step: 1 },
 
-    // perf knobs (NEW)
+    // perf knobs
     { key: 'fpsCap', label: 'FPS Cap', type: 'number', default: 60, min: 15, max: 120, step: 1 },
     { key: 'renderScale', label: 'Render Scale', type: 'number', default: 0.75, min: 0.35, max: 1.0, step: 0.01 },
     { key: 'dprCap', label: 'DPR Cap', type: 'number', default: 2.0, min: 1, max: 3, step: 0.1 },
@@ -34,9 +39,9 @@ export const meta = {
     { key: 'shakeMaxPx', label: 'Max Shake (px)', type: 'number', default: 4, min: 0, max: 16, step: 1 },
 
     // ---- Audio (PRO) ----
-    { key: 'audioEnabled', label: 'Audio Enabled', type: 'select', default: false,
+    { key: 'audioEnabled', label: 'Audio Enabled', type: 'select', default: true,
       options: [{ value: true, label: 'On' }, { value: false, label: 'Off' }] },
-    { key: 'audioPackId', label: 'Audio Pack ID', type: 'text', default: '' },
+    { key: 'audioPackId', label: 'Audio Pack ID', type: 'text', default: 'ROCKON' },
     { key: 'audioMasterVolume', label: 'Audio Master Volume', type: 'number', default: 0.70, min: 0, max: 1, step: 0.01 },
     { key: 'audioFadeInMs', label: 'Audio Fade In (ms)', type: 'number', default: 350, min: 30, max: 4000, step: 10 },
     { key: 'audioFadeOutMs', label: 'Audio Fade Out (ms)', type: 'number', default: 600, min: 30, max: 6000, step: 10 }
@@ -62,7 +67,6 @@ function rgbToCss({ r, g, b }, a = 1) {
 
 // cheap deterministic hash noise in [0..1)
 function hash01(i) {
-  // xorshift-ish
   let x = i | 0;
   x ^= x << 13; x ^= x >>> 17; x ^= x << 5;
   return ((x >>> 0) % 1024) / 1024;
@@ -243,7 +247,6 @@ export function init({ root, config, api }) {
     const steps = Math.max(8, (w / stepPx) | 0);
 
     ctx.globalAlpha = alpha;
-
     ctx.beginPath();
 
     if (!vertical) {
@@ -254,7 +257,6 @@ export function init({ root, config, api }) {
         const x = x0 + (i / steps) * w;
         const n = turb(x, tSec) * 0.5 + turb(x * 1.7, tSec * 1.3) * 0.35 + turb(x * 2.4, tSec * 0.7) * 0.15;
 
-        // deterministic flicker (no Math.random)
         const flicker = (hash01((i + (tSec * 120) | 0) ^ 0x9e3779b9) - 0.5) * lerp(0.02, 0.10, hSmooth);
 
         const amp = lerp(0.18, 0.62, hSmooth) * (1 + 0.15 * tier);
@@ -295,7 +297,7 @@ export function init({ root, config, api }) {
     ctx.fillStyle = sharedGrad.base;
     ctx.fill();
 
-    // glow pass: prefer shadowBlur over ctx.filter where possible (often cheaper)
+    // glow pass
     ctx.save();
     ctx.globalCompositeOperation = 'lighter';
     ctx.shadowColor = 'rgba(255,255,255,0.85)';
@@ -306,14 +308,9 @@ export function init({ root, config, api }) {
     ctx.restore();
   }
 
-  // shockwave
-  let pulse = 0, pulseVel = 0, pulseCooldown = 0;
-  function kickPulse(amount) { pulseVel += amount; }
-
-  // ---- audio (kept) ----
+  // ---- audio (PRO, correct StemPack API) ----
   let stemPack = null;
-  let audioWanted = false;
-  let audioReady = false;
+  let audioInitInFlight = false;
 
   function getAudioCfg() {
     return {
@@ -321,44 +318,66 @@ export function init({ root, config, api }) {
       packId: String(cfg.audioPackId || '').trim(),
       volume: clamp(cfg.audioMasterVolume ?? 0.70, 0, 1),
       fadeInMs: clamp(cfg.audioFadeInMs ?? 350, 30, 4000),
-      fadeOutMs: clamp(cfg.audioFadeOutMs ?? 600, 30, 6000)
+      fadeOutMs: clamp(cfg.audioFadeOutMs ?? 600, 30, 6000),
     };
   }
 
-  async function ensureAudioStarted(h) {
+  async function ensureAudio(h01) {
     const acfg = getAudioCfg();
-    if (!acfg.enabled || !acfg.packId) return;
-    if (audioReady) {
-      try { stemPack?.setMasterVolume(acfg.volume); } catch {}
-      try { stemPack?.setIntensity(clamp01(h)); } catch {}
+
+    // Disabled or missing pack: tear down
+    if (!acfg.enabled || !acfg.packId) {
+      if (stemPack) {
+        try { stemPack.destroy(); } catch {}
+        stemPack = null;
+      }
       return;
     }
-    if (audioWanted) return;
 
-    audioWanted = true;
+    // Already running: drive it
+    if (stemPack) {
+      try { stemPack.setMasterVolume(acfg.volume); } catch {}
+      try { stemPack.setHype(clamp01(h01)); } catch {}
+      return;
+    }
+
+    // Init once
+    if (audioInitInFlight) return;
+    audioInitInFlight = true;
+
     try {
-      stemPack = await createStemPack({ id: acfg.packId });
-      if (!stemPack) return;
-      stemPack.setMasterVolume(acfg.volume);
-      stemPack.setFadeTimings({ fadeInMs: acfg.fadeInMs, fadeOutMs: acfg.fadeOutMs });
-      stemPack.setIntensity(clamp01(h));
+      stemPack = await createStemPack({
+        packId: acfg.packId,
+        baseUrl: '/public/overlays/audio',
+        options: {
+          maxStems: 5,
+          masterVolume: acfg.volume,
+          fadeInMs: acfg.fadeInMs,
+          fadeOutMs: acfg.fadeOutMs,
+          thresholds: [0.0, 0.20, 0.40, 0.65, 0.85],
+          fileExt: 'wav',
+          loop: true,
+          stopAtFirstMissing: true,
+        },
+      });
+
       await stemPack.start();
-      audioReady = true;
-    } catch {
-      // keep silent if audio fails
-      audioReady = false;
+      stemPack.setHype(clamp01(h01));
+    } catch (e) {
+      console.warn('[flameEdgeRock audio] init failed:', e);
+      try { stemPack?.destroy?.(); } catch {}
       stemPack = null;
     } finally {
-      audioWanted = false;
+      audioInitInFlight = false;
     }
   }
 
   function teardownAudio() {
-    audioReady = false;
-    audioWanted = false;
-    try { stemPack?.stop?.(); } catch {}
-    try { stemPack?.destroy?.(); } catch {}
-    stemPack = null;
+    audioInitInFlight = false;
+    if (stemPack) {
+      try { stemPack.destroy(); } catch {}
+      stemPack = null;
+    }
   }
 
   // ---- render loop with fps cap ----
@@ -391,9 +410,8 @@ export function init({ root, config, api }) {
     colorSmooth.g = lerp(colorSmooth.g, rgb.g, 0.08 + 0.22 * hLerp);
     colorSmooth.b = lerp(colorSmooth.b, rgb.b, 0.08 + 0.22 * hLerp);
 
-    // audio
-    if (getAudioCfg().enabled) void ensureAudioStarted(hSmooth);
-    else if (stemPack) teardownAudio();
+    // audio: dynamic stems track smoothed hype
+    void ensureAudio(hSmooth);
 
     const tier = (hSmooth >= 0.70) ? 3 : (hSmooth >= 0.35) ? 2 : (hSmooth >= 0.10) ? 1 : 0;
 
@@ -411,7 +429,6 @@ export function init({ root, config, api }) {
     );
 
     const alpha = clamp(lerp(0.25, 0.95, smoothstep(0.00, 1.00, hSmooth)), 0.15, 0.98);
-
     const glow = clamp(glowBlurPx + lerp(2, 18, Math.pow(hSmooth, 0.9)) * intensityScale, 0, 32);
 
     const speed = lerp(0.55, 2.8, Math.pow(hSmooth, 1.1)) * (1 + 0.10 * tier);
@@ -434,7 +451,7 @@ export function init({ root, config, api }) {
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, w, hpx);
 
-    // scale so we can draw in CSS px coordinates (vw/vh), even though backing store is scaled
+    // draw in CSS px coordinates
     const sx = (w / vw);
     const sy = (hpx / vh);
     ctx.scale(sx, sy);
@@ -454,17 +471,17 @@ export function init({ root, config, api }) {
     };
     const hotA = rgbToCss(hotRgb, clamp(0.75 + 0.20 * boost, 0.6, 0.98));
 
-    // shared gradient objects (avoid re-alloc churn)
+    // shared gradients
     const shared = { base: null };
-    // base gradient depends on orientation + band dims, so build per-frame per-orientation
-    // bottom
     shared.base = ctx.createLinearGradient(0, bottomBand.y0 + bottomBand.h, 0, bottomBand.y0);
     shared.base.addColorStop(0.00, 'rgba(0,0,0,0)');
     shared.base.addColorStop(0.82, 'rgba(255,255,255,0.82)');
     shared.base.addColorStop(1.00, 'rgba(255,255,255,0.00)');
 
-    drawFlameBand({ x0: bottomBand.x0, y0: bottomBand.y0, w: bottomBand.w, h: bottomBand.h, vertical: false, flip: false },
-      tSec, tier, glow, alpha, baseA, hotA, shared);
+    drawFlameBand(
+      { x0: bottomBand.x0, y0: bottomBand.y0, w: bottomBand.w, h: bottomBand.h, vertical: false, flip: false },
+      tSec, tier, glow, alpha, baseA, hotA, shared
+    );
 
     if (position === 'edges') {
       const sharedSide = { base: ctx.createLinearGradient(leftBand.x0, 0, leftBand.x0 + leftBand.w, 0) };
@@ -472,44 +489,18 @@ export function init({ root, config, api }) {
       sharedSide.base.addColorStop(0.82, 'rgba(255,255,255,0.82)');
       sharedSide.base.addColorStop(1.00, 'rgba(255,255,255,0.00)');
 
-      drawFlameBand({ x0: leftBand.x0, y0: leftBand.y0, w: leftBand.w, h: leftBand.h, vertical: true, flip: false },
-        tSec, tier, glow, alpha * 0.90, baseA, hotA, sharedSide);
+      drawFlameBand(
+        { x0: leftBand.x0, y0: leftBand.y0, w: leftBand.w, h: leftBand.h, vertical: true, flip: false },
+        tSec, tier, glow, alpha * 0.90, baseA, hotA, sharedSide
+      );
 
-      drawFlameBand({ x0: rightBand.x0, y0: rightBand.y0, w: rightBand.w, h: rightBand.h, vertical: true, flip: true },
-        tSec, tier, glow, alpha * 0.90, baseA, hotA, sharedSide);
+      drawFlameBand(
+        { x0: rightBand.x0, y0: rightBand.y0, w: rightBand.w, h: rightBand.h, vertical: true, flip: true },
+        tSec, tier, glow, alpha * 0.90, baseA, hotA, sharedSide
+      );
     }
 
-    // shimmer (kept, but no excessive filter churn)
-    if (tier >= 2) {
-      const shimmerA = clamp(0.04 + 0.10 * smoothstep(0.35, 1.00, hSmooth), 0, 0.18);
-      ctx.save();
-      ctx.globalAlpha = shimmerA;
-      ctx.globalCompositeOperation = 'lighter';
-      ctx.shadowColor = 'rgba(255,255,255,0.35)';
-      ctx.shadowBlur = clamp(lerp(2, 10, hSmooth), 0, 12);
-
-      const shimmerH = thickness * 1.25;
-      const y0 = vh - thickness * 1.25;
-      const shimmerGrad = ctx.createLinearGradient(0, y0 + shimmerH, 0, y0);
-      shimmerGrad.addColorStop(0.0, 'rgba(0,0,0,0)');
-      shimmerGrad.addColorStop(0.3, rgbToCss(colorSmooth, 0.30));
-      shimmerGrad.addColorStop(0.7, 'rgba(255,255,255,0.20)');
-      shimmerGrad.addColorStop(1.0, 'rgba(255,255,255,0)');
-      ctx.fillStyle = shimmerGrad;
-
-      const stripeCount = clamp((lerp(6, 18, hSmooth) | 0), 4, 22);
-      for (let i = 0; i < stripeCount; i++) {
-        const phase = tSec * 1.7 + i * 0.8;
-        const y = y0 + (i / stripeCount) * shimmerH;
-        const amp = lerp(4, 18, hSmooth);
-        const xOff = Math.sin(phase) * amp;
-        ctx.fillRect(xOff, y, vw, Math.max(2, shimmerH / stripeCount - 1));
-      }
-
-      ctx.restore();
-    }
-
-    // embers spawn (stable accumulator + cap)
+    // embers spawn
     const emberRate = clamp(cfg.emberRate ?? 1.0, 0, 3);
     const emberMax = (clamp(cfg.emberMax ?? 220, 0, 1200) | 0);
     const spawnCap = (clamp(cfg.emberSpawnCapPerFrame ?? 90, 0, 250) | 0);
@@ -530,7 +521,7 @@ export function init({ root, config, api }) {
       }
     }
 
-    // embers step + draw (sprite-based)
+    // embers draw
     if (embers.length) {
       ctx.save();
       ctx.globalCompositeOperation = 'lighter';
@@ -554,7 +545,7 @@ export function init({ root, config, api }) {
         const a = clamp(0.65 * fade + 0.25 * hSmooth, 0, 0.95);
 
         const sprite = getTintedEmber(p.r, p.g, p.b);
-        const drawSize = s * 8; // sprite scale factor (tuned)
+        const drawSize = s * 8;
         ctx.globalAlpha = a;
         ctx.drawImage(sprite, p.x - drawSize * 0.5, p.y - drawSize * 0.5, drawSize, drawSize);
       }
@@ -562,60 +553,28 @@ export function init({ root, config, api }) {
       ctx.restore();
     }
 
-    // tier 3 shock pulse bloom
+    // subtle tier 3 pulse bloom
     if (tier === 3 && shockwaveStrength > 0) {
-      pulseCooldown = Math.max(0, pulseCooldown - dt);
-
-      if (pulseCooldown <= 0 && hash01(((ts | 0) + 1234) ^ 0x33a) < lerp(0.08, 0.25, smoothstep(0.70, 1.00, hSmooth)) * dt * 60) {
-        kickPulse(lerp(0.35, 0.85, hSmooth) * shockwaveStrength);
-        pulseCooldown = lerp(0.35, 0.16, hSmooth);
-      }
-
-      pulseVel *= Math.pow(0.25, dt);
-      pulse = clamp(pulse + pulseVel * dt, 0, 1);
-      pulseVel -= pulse * lerp(2.4, 5.2, hSmooth) * dt;
-
-      if (pulse > 0.001) {
-        const pA = pulse * smoothstep(0.70, 1.00, hSmooth) * 0.55;
+      // (kept light; no heavy extra allocations)
+      const pA = smoothstep(0.70, 1.00, hSmooth) * 0.10 * shockwaveStrength;
+      if (pA > 0.001) {
         ctx.save();
-        ctx.globalAlpha = clamp(pA, 0, 0.55);
+        ctx.globalAlpha = clamp(pA, 0, 0.25);
         ctx.globalCompositeOperation = 'lighter';
         ctx.shadowColor = 'rgba(255,255,255,0.9)';
-        ctx.shadowBlur = clamp(lerp(10, 34, hSmooth), 8, 36);
+        ctx.shadowBlur = clamp(lerp(10, 28, hSmooth), 8, 30);
 
-        const bloomH = thickness * lerp(1.6, 2.8, hSmooth);
+        const bloomH = thickness * lerp(1.8, 2.8, hSmooth);
         const bloomGrad = ctx.createLinearGradient(0, vh, 0, vh - bloomH);
         bloomGrad.addColorStop(0.0, rgbToCss(colorSmooth, 0.0));
-        bloomGrad.addColorStop(0.25, rgbToCss(colorSmooth, 0.35));
-        bloomGrad.addColorStop(0.70, 'rgba(255,255,255,0.22)');
+        bloomGrad.addColorStop(0.25, rgbToCss(colorSmooth, 0.25));
+        bloomGrad.addColorStop(0.75, 'rgba(255,255,255,0.14)');
         bloomGrad.addColorStop(1.0, 'rgba(255,255,255,0.00)');
         ctx.fillStyle = bloomGrad;
         ctx.fillRect(0, vh - bloomH, vw, bloomH);
 
-        if (position === 'edges') {
-          const bloomW = thickness * lerp(1.5, 2.6, hSmooth);
-
-          const leftGrad = ctx.createLinearGradient(0, 0, bloomW, 0);
-          leftGrad.addColorStop(0.0, rgbToCss(colorSmooth, 0.0));
-          leftGrad.addColorStop(0.35, rgbToCss(colorSmooth, 0.25));
-          leftGrad.addColorStop(0.75, 'rgba(255,255,255,0.16)');
-          leftGrad.addColorStop(1.0, 'rgba(255,255,255,0.00)');
-          ctx.fillStyle = leftGrad;
-          ctx.fillRect(0, 0, bloomW, vh);
-
-          const rightGrad = ctx.createLinearGradient(vw, 0, vw - bloomW, 0);
-          rightGrad.addColorStop(0.0, rgbToCss(colorSmooth, 0.0));
-          rightGrad.addColorStop(0.35, rgbToCss(colorSmooth, 0.25));
-          rightGrad.addColorStop(0.75, 'rgba(255,255,255,0.16)');
-          rightGrad.addColorStop(1.0, 'rgba(255,255,255,0.00)');
-          ctx.fillStyle = rightGrad;
-          ctx.fillRect(vw - bloomW, 0, bloomW, vh);
-        }
-
         ctx.restore();
       }
-    } else {
-      pulse = 0; pulseVel = 0; pulseCooldown = 0;
     }
 
     container.style.opacity = (tier === 0) ? '0.65' : '1.0';
@@ -630,11 +589,16 @@ export function init({ root, config, api }) {
   function setConfig(next) {
     if (next && typeof next === 'object') {
       cfg = { ...cfg, ...next };
-      resize(); // apply renderScale/fpsCap/dprCap changes immediately
+      resize();
+      // live volume updates are supported; fade timings are applied at creation time (simple v1).
       if (stemPack) {
         try { stemPack.setMasterVolume(clamp(cfg.audioMasterVolume ?? 0.70, 0, 1)); } catch {}
+        try { stemPack.setHype(clamp01(hSmooth)); } catch {}
       }
-      if (!getAudioCfg().enabled && stemPack) teardownAudio();
+      // if disabled mid-stream, tear down
+      if (!String(cfg.audioPackId || '').trim() || !cfg.audioEnabled) {
+        teardownAudio();
+      }
       blend = computeBlendAndHype(latestSnap, cfg);
     }
   }
