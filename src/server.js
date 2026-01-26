@@ -28,9 +28,11 @@ const { chatConfigRoutes } = require('./routes/chatConfigRoutes');
 const { eventKeyRoutes } = require('./routes/eventKeyRoutes');
 const { eventApiPageRoutes } = require('./routes/eventApiPageRoutes');
 const { ownerStreamersRoutes } = require('./routes/ownerStreamersRoutes');
+const { startDecayLoop } = require('./services/decayLoopService');
 
 const app = express();
 
+startDecayLoop({ intervalMs: 15000 });
 // Trust proxy if later deployed behind reverse proxy
 app.set('trust proxy', 1);
 
