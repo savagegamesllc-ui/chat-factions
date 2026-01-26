@@ -4,6 +4,8 @@
 const express = require('express');
 const { requireStreamer } = require('../middleware/requireStreamer');
 const { getDashboardSummary } = require('../services/dashboardService');
+const { bustChatConfigCache } = require('../services/chatConfigService');
+
 
 
 const {
@@ -20,6 +22,13 @@ const {
   selectLayoutForSlot,
   saveOverrideConfig
 } = require('../services/layoutSelectionService');
+
+const {
+  listChatCommands,
+  updateChatCommand,
+  addAlias,
+  deleteAlias
+} = require('../services/chatCommandsService');
 
 
 
@@ -170,6 +179,62 @@ function dashboardRoutes() {
       res.status(err.statusCode || 400).json({ error: err.message || 'Failed to delete faction.' });
     }
   });
+
+    // --------------------
+  // Chat Page (SSR)
+  // --------------------
+  router.get('/admin/chat', requireStreamer, async (req, res, next) => {
+    try {
+      res.render('pages/streamer/chat', { title: 'Chat' });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  // --------------------
+  // Chat Commands API (JSON)
+  // --------------------
+  router.get('/admin/api/chat/commands', requireStreamer, async (req, res, next) => {
+    try {
+      const data = await listChatCommands(req.session.streamerId);
+      res.json(data);
+    } catch (err) {
+      next(err);
+    }
+  });
+
+router.put('/admin/api/chat/commands/:id', requireStreamer, async (req, res) => {
+  try {
+    const out = await updateChatCommand(req.session.streamerId, req.params.id, req.body || {});
+    bustChatConfigCache(req.session.streamerId); // <- bust AFTER update succeeds
+    res.json(out);
+  } catch (err) {
+    res.status(err.statusCode || 400).json({ error: err.message || 'Failed to update command.' });
+  }
+});
+
+
+router.post('/admin/api/chat/commands/:id/aliases', requireStreamer, async (req, res) => {
+  try {
+    const alias = String((req.body && req.body.alias) || '');
+    const out = await addAlias(req.session.streamerId, req.params.id, alias);
+    bustChatConfigCache(req.session.streamerId);
+    res.status(201).json(out);
+  } catch (err) {
+    res.status(err.statusCode || 400).json({ error: err.message || 'Failed to add alias.' });
+  }
+});
+
+router.delete('/admin/api/chat/aliases/:id', requireStreamer, async (req, res) => {
+  try {
+    const out = await deleteAlias(req.session.streamerId, req.params.id);
+    bustChatConfigCache(req.session.streamerId);
+    res.json(out);
+  } catch (err) {
+    res.status(err.statusCode || 400).json({ error: err.message || 'Failed to delete alias.' });
+  }
+});
+
 
   return router;
 }

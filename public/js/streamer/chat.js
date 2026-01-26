@@ -1,196 +1,236 @@
 // public/js/streamer/chat.js
 'use strict';
 
-const cfgEl = document.getElementById('cfg');
-const btnSave = document.getElementById('btnSave');
-const btnReset = document.getElementById('btnReset');
-const defaultsEl = document.getElementById('defaults');
-const statusEl = document.getElementById('status');
-
-function showStatus(msg, kind = 'ok') {
-  if (!statusEl) return;
-  statusEl.className = `notice ${kind}`;
-  statusEl.textContent = msg;
-  statusEl.style.display = msg ? 'block' : 'none';
-}
-
 async function fetchJSON(url, opts) {
   const res = await fetch(url, { credentials: 'include', ...opts });
   const text = await res.text();
   let data = null;
   try { data = text ? JSON.parse(text) : null; } catch {}
   if (!res.ok) {
-    const msg = (data && (data.error || data.message)) || text || `HTTP ${res.status}`;
-    throw new Error(msg);
+    const err = new Error(data?.error || data?.message || text || `Request failed (${res.status})`);
+    err.status = res.status;
+    throw err;
   }
   return data;
 }
 
-function safeParseObject(text) {
-  const raw = String(text ?? '').trim();
-  if (!raw) return null; // blank means reset
-  try {
-    const v = JSON.parse(raw);
-    if (!v || typeof v !== 'object' || Array.isArray(v)) {
-      return { __err: 'Config must be a JSON object.' };
-    }
-    return v;
-  } catch (e) {
-    return { __err: e.message || 'Invalid JSON.' };
-  }
+function $(id) { return document.getElementById(id); }
+
+function showStatus(msg, kind = 'ok') {
+  const el = $('status');
+  if (!el) return;
+  el.className = `notice ${kind}`;
+  el.textContent = msg || '';
 }
 
-// Endpoint candidates
-const LOAD_URLS = [
-  '/admin/api/chat/config',
-  '/admin/api/chat',
-  '/admin/chat/config'
-];
-
-const SAVE_URLS = [
-  '/admin/api/chat/config',
-  '/admin/api/chat',
-  '/admin/chat/config'
-];
-
-const RESET_URLS = [
-  '/admin/api/chat/reset',
-  '/admin/api/chat/config/reset',
-  '/admin/chat/reset'
-];
-
-async function tryGet(urls) {
-  let lastErr = null;
-  for (const u of urls) {
-    try { return await fetchJSON(u); } catch (e) { lastErr = e; }
-  }
-  throw lastErr || new Error('No chat config endpoint worked.');
+function esc(s) {
+  return String(s ?? '').replace(/[&<>"']/g, (c) => ({
+    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+  }[c]));
 }
 
-async function tryPost(urls, bodyObj) {
-  let lastErr = null;
-  for (const u of urls) {
-    try {
-      return await fetchJSON(u, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: bodyObj ? JSON.stringify(bodyObj) : undefined
-      });
-    } catch (e) {
-      lastErr = e;
-    }
-  }
-  throw lastErr || new Error('No chat config endpoint worked.');
-}
+function renderCommands(commands) {
+  const wrap = $('commandsWrap');
+  if (!wrap) return;
 
-function setButtonsDisabled(v) {
-  if (btnSave) btnSave.disabled = v;
-  if (btnReset) btnReset.disabled = v;
-}
-
-function renderDefaults(obj) {
-  if (!defaultsEl) return;
-  if (!obj) {
-    defaultsEl.textContent = '';
-    return;
-  }
-  try {
-    defaultsEl.textContent = JSON.stringify(obj, null, 2);
-  } catch {
-    defaultsEl.textContent = String(obj);
-  }
-}
-
-async function load() {
-  showStatus('', 'ok');
-  setButtonsDisabled(true);
-
-  const data = await tryGet(LOAD_URLS);
-
-  // Try a few shapes
-  const current = data?.config ?? data?.chatConfig ?? data?.currentConfig ?? null;
-  const defaults = data?.defaults ?? data?.defaultConfig ?? data?.defaultChatConfig ?? null;
-
-  if (cfgEl) cfgEl.value = current ? JSON.stringify(current, null, 2) : '';
-  renderDefaults(defaults);
-
-  setButtonsDisabled(false);
-  showStatus('Loaded chat config.', 'ok');
-}
-
-async function save() {
-  const parsed = safeParseObject(cfgEl.value);
-
-  if (parsed && parsed.__err) {
-    showStatus(`Invalid JSON: ${parsed.__err}`, 'error');
+  if (!commands || !commands.length) {
+    wrap.innerHTML = `<div class="small muted">No commands found.</div>`;
     return;
   }
 
-  setButtonsDisabled(true);
-  showStatus(parsed == null ? 'Resetting to defaults…' : 'Saving…', 'ok');
+  const rows = commands.map((c) => {
+    const trigger = c.trigger ? `!${c.trigger}` : '!(unset)';
+    const aliases = (c.aliases || []).map(a =>
+      `<span class="pill mono">!${esc(a.alias)}
+        <button class="btn xs danger" data-del-alias="${esc(a.id)}" title="Remove alias" style="margin-left:6px;">×</button>
+      </span>`
+    ).join(' ');
 
-  // Most servers accept either:
-  // - { config: <object|null> }
-  // - or { configText: "<json>" }
-  // We'll send both safely.
-  const raw = String(cfgEl.value ?? '').trim();
+    return `
+      <div class="card" style="margin-top:12px;">
+        <div class="card-title">
+          <h3 style="margin:0;">${esc(c.type)} <span class="pill mono">${esc(trigger)}</span></h3>
+          <div class="hint">Command ID: <span class="mono">${esc(c.id)}</span></div>
+        </div>
 
-  try {
-    await tryPost(SAVE_URLS, {
-      config: parsed,                 // null means reset
-      configText: raw || ''           // keep compatibility
-    });
+        <div class="grid two" style="margin-top:10px;">
+          <div>
+            <label class="small">Trigger (without !)</label>
+            <input class="input mono" data-field="trigger" data-id="${esc(c.id)}" value="${esc(c.trigger)}" placeholder="hype" />
+            <div class="small muted">Example: <span class="mono">hype</span> → chat uses <span class="mono">!hype</span></div>
+          </div>
 
-    setButtonsDisabled(false);
-    showStatus(parsed == null ? 'Reset to defaults.' : 'Saved.', 'ok');
-    await load(); // reload to reflect normalized server config
-  } catch (e) {
-    setButtonsDisabled(false);
-    showStatus(`Save failed: ${e.message}`, 'error');
-  }
+          <div>
+            <label class="small">Enabled</label>
+            <div style="display:flex; gap:10px; align-items:center; margin-top:6px;">
+              <label class="pill" style="cursor:pointer;">
+                <input type="checkbox" data-field="isEnabled" data-id="${esc(c.id)}" ${c.isEnabled ? 'checked' : ''} />
+                Enabled
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <div class="grid two" style="margin-top:10px;">
+          <div>
+            <label class="small">Cooldown (seconds)</label>
+            <input class="input mono" data-field="cooldownSec" data-id="${esc(c.id)}" value="${esc(c.cooldownSec)}" />
+            <div class="small muted">How often each viewer can use this command.</div>
+          </div>
+
+          <div>
+            <label class="small">Bypass</label>
+            <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:6px;">
+              <label class="pill" style="cursor:pointer;">
+                <input type="checkbox" data-field="bypassBroadcaster" data-id="${esc(c.id)}" ${c.bypassBroadcaster ? 'checked' : ''} />
+                Broadcaster
+              </label>
+              <label class="pill" style="cursor:pointer;">
+                <input type="checkbox" data-field="bypassMods" data-id="${esc(c.id)}" ${c.bypassMods ? 'checked' : ''} />
+                Mods
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <div class="grid two" style="margin-top:10px;">
+          <div>
+            <label class="small">Max Delta</label>
+            <input class="input mono" data-field="maxDelta" data-id="${esc(c.id)}" value="${esc(c.maxDelta ?? '')}" placeholder="25" />
+            <div class="small muted">Clamp for safety.</div>
+          </div>
+
+          <div>
+            <label class="small">Default Delta</label>
+            <input class="input mono" data-field="defaultDelta" data-id="${esc(c.id)}" value="${esc(c.defaultDelta ?? '')}" placeholder="1" />
+            <div class="small muted">Used when chat omits the delta (future parsing).</div>
+          </div>
+        </div>
+
+        <div style="margin-top:12px;">
+          <label class="small">Aliases</label>
+          <div style="margin-top:6px; display:flex; gap:8px; flex-wrap:wrap;">
+            ${aliases || `<span class="small muted">No aliases</span>`}
+          </div>
+
+          <div style="margin-top:10px; display:flex; gap:10px; flex-wrap:wrap;">
+            <input class="input mono" data-alias-input="${esc(c.id)}" placeholder="cfhype" />
+            <button class="btn" data-add-alias="${esc(c.id)}">Add Alias</button>
+            <button class="btn primary" data-save="${esc(c.id)}">Save</button>
+          </div>
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  wrap.innerHTML = rows;
 }
 
-async function reset() {
-  if (!confirm('Reset chat config to defaults?')) return;
+async function loadCommands() {
+  const data = await fetchJSON('/admin/api/chat/commands');
+  renderCommands(data.commands || []);
+}
 
-  setButtonsDisabled(true);
-  showStatus('Resetting…', 'ok');
+function collectPatch(commandId) {
+  const patch = {};
+  const inputs = document.querySelectorAll(`[data-id="${commandId}"]`);
 
-  try {
-    // Prefer explicit reset endpoint
-    try {
-      await tryPost(RESET_URLS);
-    } catch {
-      // fallback: blank save
-      await tryPost(SAVE_URLS, { config: null, configText: '' });
+  inputs.forEach(el => {
+    const field = el.getAttribute('data-field');
+    if (!field) return;
+
+    if (el.type === 'checkbox') patch[field] = !!el.checked;
+    else patch[field] = el.value;
+  });
+
+  // numeric coercion
+  if (patch.cooldownSec != null) patch.cooldownSec = Number(patch.cooldownSec);
+  if (patch.maxDelta != null && patch.maxDelta !== '') patch.maxDelta = Number(patch.maxDelta);
+  if (patch.defaultDelta != null && patch.defaultDelta !== '') patch.defaultDelta = Number(patch.defaultDelta);
+
+  return patch;
+}
+
+async function saveCommand(commandId) {
+  const patch = collectPatch(commandId);
+  const out = await fetchJSON(`/admin/api/chat/commands/${encodeURIComponent(commandId)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(patch)
+  });
+  showStatus('Saved command settings.', 'ok');
+  return out;
+}
+
+async function addAlias(commandId) {
+  const inp = document.querySelector(`[data-alias-input="${commandId}"]`);
+  const alias = String(inp?.value || '').trim();
+  if (!alias) {
+    showStatus('Alias is required.', 'error');
+    return;
+  }
+
+  await fetchJSON(`/admin/api/chat/commands/${encodeURIComponent(commandId)}/aliases`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ alias })
+  });
+
+  showStatus('Alias added.', 'ok');
+  await loadCommands();
+}
+
+async function delAlias(aliasId) {
+  await fetchJSON(`/admin/api/chat/aliases/${encodeURIComponent(aliasId)}`, {
+    method: 'DELETE'
+  });
+  showStatus('Alias removed.', 'ok');
+  await loadCommands();
+}
+
+function wireEvents() {
+  document.addEventListener('click', async (e) => {
+    const t = e.target;
+
+    const saveId = t?.getAttribute?.('data-save');
+    if (saveId) {
+      try {
+        await saveCommand(saveId);
+        await loadCommands();
+      } catch (err) {
+        showStatus(err.message || 'Failed to save.', 'error');
+      }
+      return;
     }
 
-    setButtonsDisabled(false);
-    showStatus('Reset to defaults.', 'ok');
-    await load();
-  } catch (e) {
-    setButtonsDisabled(false);
-    showStatus(`Reset failed: ${e.message}`, 'error');
+    const addId = t?.getAttribute?.('data-add-alias');
+    if (addId) {
+      try {
+        await addAlias(addId);
+      } catch (err) {
+        showStatus(err.message || 'Failed to add alias.', 'error');
+      }
+      return;
+    }
+
+    const delId = t?.getAttribute?.('data-del-alias');
+    if (delId) {
+      try {
+        await delAlias(delId);
+      } catch (err) {
+        showStatus(err.message || 'Failed to remove alias.', 'error');
+      }
+      return;
+    }
+  });
+}
+
+document.addEventListener('DOMContentLoaded', async () => {
+  try {
+    wireEvents();
+    await loadCommands();
+    showStatus('', 'ok');
+  } catch (err) {
+    showStatus(err.message || 'Failed to load chat commands.', 'error');
   }
-}
-
-function wire() {
-  if (btnSave) btnSave.addEventListener('click', (e) => { e.preventDefault(); save(); });
-  if (btnReset) btnReset.addEventListener('click', (e) => { e.preventDefault(); reset(); });
-
-  // UX: Ctrl/Cmd+S to save
-  document.addEventListener('keydown', (e) => {
-    const isSave = (e.ctrlKey || e.metaKey) && (e.key === 's' || e.key === 'S');
-    if (!isSave) return;
-    e.preventDefault();
-    save();
-  });
-}
-
-document.addEventListener('DOMContentLoaded', () => {
-  wire();
-  load().catch(err => {
-    setButtonsDisabled(false);
-    showStatus(err.message || 'Failed to load chat config.', 'error');
-  });
 });

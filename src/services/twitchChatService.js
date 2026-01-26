@@ -20,35 +20,74 @@ function getUserKey(tags) {
   return `user:${String(u || 'unknown').toLowerCase()}`;
 }
 
+function normalizeCmd(s) {
+  return String(s || '').trim().toLowerCase();
+}
+
+function cmdMatches(cmd, primary, aliases) {
+  const c = normalizeCmd(cmd);
+  const p = normalizeCmd(primary);
+  if (c && p && c === p) return true;
+
+  const list = Array.isArray(aliases) ? aliases : [];
+  for (const a of list) {
+    if (c === normalizeCmd(a)) return true;
+  }
+  return false;
+}
+
 function parseCommand(message, chatCfg) {
   const text = String(message || '').trim();
   if (!text.startsWith('!')) return null;
 
-  // defaults (these exist in your chatConfigService defaults)
-  const hypeCmd = String(chatCfg?.commands?.hype?.name || '!hype').toLowerCase();
-  const maxCmd = String(chatCfg?.commands?.maxhype?.name || '!maxhype').toLowerCase();
-
   const parts = text.split(/\s+/);
-  const cmd = (parts[0] || '').toLowerCase();
+  const cmd = normalizeCmd(parts[0] || '');
+
+  const hypeName = String(chatCfg?.commands?.hype?.name || '!hype');
+  const hypeAliases = chatCfg?.commands?.hype?.aliases || [];
+
+  const maxName = String(chatCfg?.commands?.maxhype?.name || '!maxhype');
+  const maxAliases = chatCfg?.commands?.maxhype?.aliases || [];
+
+  const voteName = String(chatCfg?.commands?.vote?.name || '!vote');
+  const voteAliases = chatCfg?.commands?.vote?.aliases || [];
 
   // !hype ORDER 5
-  if (cmd === hypeCmd) {
+  if (cmdMatches(cmd, hypeName, hypeAliases)) {
     const factionKey = (parts[1] || '').toUpperCase();
     const delta = Number(parts[2] || 0);
     if (!factionKey) return null;
-    return { type: 'hype', factionKey, delta };
+    return { type: 'hype', action: 'hype', factionKey, delta };
   }
 
-  // !maxhype ORDER  (debug)
-  if (cmd === maxCmd) {
+  // !maxhype ORDER
+  if (cmdMatches(cmd, maxName, maxAliases)) {
     const factionKey = (parts[1] || '').toUpperCase();
     if (!factionKey) return null;
-    // big visible spike (note: still capped by maxDelta below)
-    return { type: 'hype', factionKey, delta: 100 };
+    // big visible spike (still capped later)
+    return { type: 'hype', action: 'maxhype', factionKey, delta: 100 };
+  }
+
+  // !vote ORDER   (optional; safe even if you don't use it yet)
+  if (cmdMatches(cmd, voteName, voteAliases)) {
+    const factionKey = (parts[1] || '').toUpperCase();
+    if (!factionKey) return null;
+
+    // If they type "!vote ORDER 3" allow it; else use configured weight/default
+    const maybe = parts[2];
+    const weight = Number(chatCfg?.commands?.vote?.weight ?? 1);
+
+    const delta = (maybe != null && maybe !== '')
+      ? Number(maybe)
+      : Number(weight);
+
+    if (!Number.isFinite(delta) || delta === 0) return null;
+    return { type: 'hype', action: 'vote', factionKey, delta };
   }
 
   return null;
 }
+
 
 function isBroadcasterOrMod(tags) {
   const badges = tags?.badges || {};
@@ -188,11 +227,11 @@ async function startChatForStreamer(streamerId) {
       const userKey = getUserKey(tags);
       const { isBroadcaster, isMod } = isBroadcasterOrMod(tags);
 
-      let overrideMinutes = chatCfg?.cooldownMinutes?.hype ?? null;
+      let overrideMinutes = chatCfg?.cooldownMinutes?.[parsed.action] ?? chatCfg?.cooldownMinutes?.hype ?? null;
       let allowed = true;
 
       if (!isBroadcaster && !isMod) {
-        allowed = await checkAndTouchCooldown(session.id, 'hype', userKey, overrideMinutes);
+        allowed = await checkAndTouchCooldown(session.id, parsed.action, userKey, overrideMinutes);
       }
 
       console.log('[cmd] cooldown', {
