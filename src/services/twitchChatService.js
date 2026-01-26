@@ -50,6 +50,23 @@ function parseCommand(message, chatCfg) {
   return null;
 }
 
+function isBroadcasterOrMod(tags) {
+  const badges = tags?.badges || {};
+  const badgeInfo = tags?.badgeInfo || {};
+
+  const isBroadcaster =
+    badges.broadcaster === '1' || badgeInfo.broadcaster === '1';
+
+  // tmi sets tags.mod as boolean-ish, and may also provide moderator badge
+  const isMod =
+    tags?.mod === true ||
+    tags?.mod === '1' ||
+    badges.moderator === '1' ||
+    badgeInfo.moderator === '1';
+
+  return { isBroadcaster, isMod };
+}
+
 async function startChatForStreamer(streamerId) {
   if (!streamerId) {
     const e = new Error('Missing streamerId');
@@ -94,7 +111,7 @@ async function startChatForStreamer(streamerId) {
       reconnect: true,
     },
     identity: {
-      username: streamer.login, // This makes YOUR messages come in as self===true
+      username: streamer.login, // This makes YOUR messages come in as self===true on some setups
       password: `oauth:${accessToken}`,
     },
     channels: [channelName],
@@ -132,9 +149,7 @@ async function startChatForStreamer(streamerId) {
       });
     }
 
-    // ✅ IMPORTANT CHANGE:
-    // We no longer drop self messages, because you are connected as the streamer account.
-    // If later you swap to a separate bot account, this still works fine.
+    // We do NOT drop self messages anymore.
     // if (self) return;
 
     try {
@@ -147,7 +162,7 @@ async function startChatForStreamer(streamerId) {
       }
 
       // Cap per command
-      let deltaRaw = Number(parsed.delta || 0);
+      const deltaRaw = Number(parsed.delta || 0);
       if (!Number.isFinite(deltaRaw) || deltaRaw === 0) {
         console.log('[cmd] delta invalid/zero', { streamerId: streamer.id, parsed, text });
         return;
@@ -168,18 +183,25 @@ async function startChatForStreamer(streamerId) {
         maxD,
       });
 
-      // cooldown
+      // cooldown (bypass for broadcaster/mod so testing isn't miserable)
       const session = await getOrCreateActiveSession(streamer.id);
       const userKey = getUserKey(tags);
+      const { isBroadcaster, isMod } = isBroadcasterOrMod(tags);
 
-      const overrideMinutes = chatCfg?.cooldownMinutes?.hype;
-      const allowed = await checkAndTouchCooldown(session.id, 'hype', userKey, overrideMinutes);
+      let overrideMinutes = chatCfg?.cooldownMinutes?.hype ?? null;
+      let allowed = true;
+
+      if (!isBroadcaster && !isMod) {
+        allowed = await checkAndTouchCooldown(session.id, 'hype', userKey, overrideMinutes);
+      }
 
       console.log('[cmd] cooldown', {
         streamerId: streamer.id,
         allowed,
         userKey,
-        overrideMinutes: overrideMinutes ?? null,
+        overrideMinutes,
+        isBroadcaster,
+        isMod,
         sessionId: session?.id,
       });
 
@@ -193,13 +215,13 @@ async function startChatForStreamer(streamerId) {
         self: !!self,
       });
 
-      // 🔥 HARD PROOF: emit a tiny debug meter event so we can see twitch-chat path end-to-end
+      // 🔥 HARD PROOF: tiny debug meter event so we can see twitch-chat path end-to-end
       broadcast(streamer.id, 'meters', {
         debugFrom: 'twitchChatService',
         at: new Date().toISOString(),
         factionKey: parsed.factionKey,
         delta: capped,
-        user: tags?.username || null
+        user: tags?.username || null,
       });
 
       console.log('[cmd] hype applied', {
