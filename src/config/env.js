@@ -37,7 +37,10 @@ const config = {
   stripePriceIdPro: process.env.STRIPE_PRICE_ID_PRO || '',
 
   // Base URL (helpful for generating absolute links)
-  appBaseUrl: process.env.APP_BASE_URL || `http://localhost:${toInt(process.env.PORT, 3000)}`
+  appBaseUrl: process.env.APP_BASE_URL || `http://localhost:${toInt(process.env.PORT, 3000)}`,
+
+  TWITCH_EVENTSUB_SECRET: process.env.TWITCH_EVENTSUB_SECRET || '',
+  EVENTSUB_WEBHOOK_SECRET: process.env.EVENTSUB_WEBHOOK_SECRET || ''
 };
 
 module.exports = { config };
