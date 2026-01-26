@@ -13,6 +13,13 @@ enum PlanTier {
   PRO
 }
 
+enum ChatCommandType {
+  HYPE
+  MAXHYPE
+  VOTE
+  CUSTOM
+}
+
 //
 // ✅ Twitch-authenticated streamer account (dashboard user)
 //
@@ -51,22 +58,23 @@ model Streamer {
   memberships FactionMembership[]
   eventLogs   EventLog[]
   voteEvents  VoteEvent[]
-    
-    // Twitch OAuth tokens (for chat connection + refresh)
+
+  // Twitch OAuth tokens (for chat connection + refresh)
   twitchAccessToken     String?
   twitchRefreshToken    String?
   twitchTokenExpiresAt  DateTime?
   twitchScopes          Json?
   twitchTokenUpdatedAt  DateTime?
 
-    // Streamer-configurable chat command settings
+  // ✅ Keep for backwards compatibility (current dashboard JSON editor uses this)
   chatConfig Json?
+
+  // ✅ New scalable chat command system (optional until you wire UI/services)
+  chatCommands ChatCommand[]
 
   // External event ingestion auth (game triggers, etc.)
   eventApiKey String? @unique
   externalReceipts ExternalEventReceipt[]
-
-
 }
 
 //
@@ -160,6 +168,11 @@ model EventLog {
   id         String   @id @default(cuid())
   streamerId String
   type       String
+
+  // ✅ ADD THIS: fixes the "Unknown argument `source`" crash
+  // Make it required with a default so old rows remain valid.
+  source     String   @default("system")
+
   payload    Json
   viewerId   String?
   sessionId  String?
@@ -227,6 +240,56 @@ model VoteCooldown {
 }
 
 //
+// ✅ NEW: scalable per-streamer command config
+//
+model ChatCommand {
+  id            String         @id @default(cuid())
+  streamerId    String
+  type          ChatCommandType @default(HYPE)
+
+  // What the streamer actually types in chat, ex: "!hype"
+  trigger       String
+
+  isEnabled     Boolean        @default(true)
+
+  // Cooldown per user for this command (seconds)
+  cooldownSec   Int            @default(30)
+
+  // Optional bypasses (good for testing + moderation)
+  bypassBroadcaster Boolean    @default(true)
+  bypassMods        Boolean    @default(true)
+
+  // For HYPE/MAXHYPE (and other delta-based commands)
+  maxDelta      Int?           // e.g. 25
+  defaultDelta  Int?           // optional if streamer omits amount
+
+  // Optional JSON for future expansion (ex: streamerbot harmony mode)
+  meta          Json?
+
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  streamer      Streamer       @relation(fields: [streamerId], references: [id], onDelete: Cascade)
+  aliases       ChatCommandAlias[]
+
+  @@index([streamerId])
+  @@unique([streamerId, trigger])
+}
+
+model ChatCommandAlias {
+  id         String      @id @default(cuid())
+  commandId  String
+  alias      String
+
+  createdAt  DateTime    @default(now())
+
+  command    ChatCommand @relation(fields: [commandId], references: [id], onDelete: Cascade)
+
+  @@unique([commandId, alias])
+  @@index([alias])
+}
+
+//
 // ✅ Overlay assets (optional early, fine to keep)
 //
 model OverlayAsset {
@@ -251,9 +314,6 @@ model OverlayAsset {
   @@index([kind])
 }
 
-//
-// ✅ Session store table (only if you plan to use Prisma session store)
-//
 model DashboardSession {
   sid       String    @id
   data      Json
@@ -264,9 +324,6 @@ model DashboardSession {
   @@index([expiresAt])
 }
 
-//
-// ✅ DB-driven overlay layouts (owner-managed)
-//
 model OverlayLayout {
   id       String   @id @default(cuid())
   name     String
@@ -287,20 +344,13 @@ model OverlayLayout {
   @@index([tier, isActive])
 }
 
-//
-// ✅ StreamerLayout join per your spec (RESTORED)
-//
 model StreamerLayout {
   id          String   @id @default(cuid())
   streamerId  String
   layoutId    String
 
   isEnabled   Boolean  @default(true)
-
-  // Legacy (slot 0) selection flag
   isSelected  Boolean  @default(false)
-
-  // NEW: which slot this layout is selected for (0..3). null means not selected.
   selectedSlot Int?
 
   overrideConfig Json?
@@ -314,15 +364,10 @@ model StreamerLayout {
   @@unique([streamerId, layoutId])
   @@index([streamerId])
   @@index([layoutId])
-
-  // NEW: enforce only one selected layout per slot per streamer (Postgres allows many NULLs)
   @@unique([streamerId, selectedSlot])
   @@index([streamerId, selectedSlot])
 }
 
-//
-// ✅ View analytics for overlay loads
-//
 model OverlayView {
   id         String  @id @default(cuid())
   streamerId String
