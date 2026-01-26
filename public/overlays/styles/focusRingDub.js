@@ -1,5 +1,5 @@
-// public/overlays/styles/focusRing.js
-// Focus Ring (FREE) — v2 (new contract + Crownfall-style hype)
+// public/overlays/styles/focusRingDub.js
+// Focus Ring Dub (PRO) — v3 (adds stem-based audio)
 // - Animated ring to highlight/encircle something (facecam/player icon).
 // - Reacts to faction hype (color) and total hype (pulse/thickness/glow).
 // - NEW CONTRACT: init({ root, config, api }) -> { destroy, setConfig }
@@ -10,12 +10,14 @@
 
 'use strict';
 
+import { createStemPack } from '/public/overlays/audio/stemPack.js';
+
 export const meta = {
-  styleKey: 'focusRing',
-  name: 'Focus Ring',
-  tier: 'FREE',
+  styleKey: 'focusRingDub',
+  name: 'Focus Ring Dub',
+  tier: 'PRO',
   description:
-    'Animated ring to highlight/encircle something (facecam/player icon). Reacts to faction hype (color) and total hype (pulse/thickness/glow).',
+    'Animated ring to highlight/encircle something (facecam/player icon). Reacts to faction hype (color) and total hype (pulse/thickness/glow). PRO version can optionally drive stem-based audio that fades in/out with hype.',
   defaultConfig: {
     // Presets (kept for UI consistency; focus ring doesn't draw a frame)
     placement: 'edges', // bottom|edges
@@ -48,6 +50,16 @@ export const meta = {
     sparkRate: 18,  // per sec
     sparkSize: 2.2,
     sparkLife: 0.55,
+
+    // --- Audio (PRO) ---
+    // Naming convention: <audioPackId>001.wav..005.wav in /public/overlays/audio/
+    // Example: EDMGAMEON001.wav .. EDMGAMEON005.wav
+    audioEnabled: true,
+    audioPackId: '',           // e.g. 'EDMGAMEON' (blank disables)
+    audioMasterVolume: 0.70,   // 0..1
+    audioFadeInMs: 350,
+    audioFadeOutMs: 600,
+    audioThresholds: [0.0, 0.20, 0.40, 0.65, 0.85],
 
     maxSparks: 600
   },
@@ -124,6 +136,11 @@ export function init({ root, config, api }) {
 
   let cfg = normalizeConfig({ ...meta.defaultConfig, ...(config || {}) });
 
+  // --- Audio (stem pack) ---
+  let stemPack = null;
+  let audioStarted = false;
+  let audioSig = '';
+
   // latest snapshot
   let latestSnap = { factions: [] };
 
@@ -141,11 +158,81 @@ export function init({ root, config, api }) {
   let accMs = 0;
   const startMs = lastMs;
 
+  function makeAudioSig(c) {
+    const pack = String(c.audioPackId || '').trim();
+    const th = Array.isArray(c.audioThresholds) ? c.audioThresholds.join(',') : '';
+    return [
+      pack,
+      String(c.audioEnabled ? 1 : 0),
+      String(c.audioMasterVolume ?? ''),
+      String(c.audioFadeInMs ?? ''),
+      String(c.audioFadeOutMs ?? ''),
+      th,
+    ].join('|');
+  }
+
+  async function ensureStemPack() {
+    if (!cfg.audioEnabled) return;
+    const packId = String(cfg.audioPackId || '').trim();
+    if (!packId) return;
+
+    const sig = makeAudioSig(cfg);
+    if (stemPack && sig === audioSig) return;
+
+    // If config changed materially, recreate
+    if (stemPack) {
+      try { stemPack.destroy(); } catch {}
+      stemPack = null;
+      audioStarted = false;
+      audioSig = '';
+    }
+
+    try {
+      stemPack = await createStemPack({
+        packId,
+        baseUrl: '/public/overlays/audio',
+        options: {
+          maxStems: 5,
+          masterVolume: clamp(cfg.audioMasterVolume ?? 0.7, 0, 1),
+          fadeInMs: clamp(cfg.audioFadeInMs ?? 350, 30, 4000),
+          fadeOutMs: clamp(cfg.audioFadeOutMs ?? 600, 30, 6000),
+          thresholds: Array.isArray(cfg.audioThresholds) ? cfg.audioThresholds : undefined,
+          fileExt: 'wav',
+          loop: true,
+          stopAtFirstMissing: true,
+        },
+      });
+
+      await stemPack.start();
+      audioStarted = true;
+      audioSig = sig;
+    } catch (e) {
+      console.warn('[focusRingDub audio] failed to init stem pack:', e);
+      try { stemPack?.destroy?.(); } catch {}
+      stemPack = null;
+      audioStarted = false;
+      audioSig = '';
+    }
+  }
+
   const unsub = api.onMeters((snap) => {
     latestSnap = snap || { factions: [] };
     total = computeTotal(latestSnap, cfg.maxTotalClamp);
     const k = clamp(cfg.hypeK, 40, 600);
     hTarget = clamp01(1 - Math.exp(-total / k));
+
+    // ---- Audio: lazy-init + drive stems (dynamic) ----
+    if (cfg.audioEnabled && String(cfg.audioPackId || '').trim()) {
+      void ensureStemPack();
+      if (stemPack && audioStarted) stemPack.setHype(clamp01(hTarget));
+    } else {
+      if (stemPack) {
+        try { stemPack.destroy(); } catch {}
+        stemPack = null;
+        audioStarted = false;
+        audioSig = '';
+      }
+    }
   });
 
   const onResize = () => resize();
@@ -178,6 +265,11 @@ export function init({ root, config, api }) {
     const smooth = clamp(cfg.hypeSmoothing, 0.05, 0.5);
     hSmooth = lerp(hSmooth, hTarget, 1 - Math.exp(-(1 / smooth) * dt));
     hSmooth = clamp01(hSmooth * clamp(cfg.intensity, 0, 2));
+
+    // Drive audio continuously with smoothed hype (dynamic fade in/out)
+    if (stemPack && audioStarted) {
+      stemPack.setHype(clamp01(hSmooth));
+    }
 
     ctx.clearRect(0, 0, w, h);
 
@@ -267,15 +359,52 @@ export function init({ root, config, api }) {
   raf = requestAnimationFrame(tick);
 
   function setConfig(next) {
+    const prevSig = makeAudioSig(cfg);
     cfg = normalizeConfig({ ...cfg, ...(next || {}) });
+
+    // Audio config updates (recreate on material change)
+    const nextSig = makeAudioSig(cfg);
+    if (prevSig !== nextSig) {
+      if (!cfg.audioEnabled || !String(cfg.audioPackId || '').trim()) {
+        if (stemPack) {
+          try { stemPack.destroy(); } catch {}
+          stemPack = null;
+          audioStarted = false;
+          audioSig = '';
+        }
+      } else {
+        void ensureStemPack();
+      }
+    } else if (stemPack) {
+      // lightweight update
+      try { stemPack.setMasterVolume(clamp(cfg.audioMasterVolume ?? 0.7, 0, 1)); } catch {}
+    }
 
     // recompute targets immediately
     total = computeTotal(latestSnap, cfg.maxTotalClamp);
     const k = clamp(cfg.hypeK, 40, 600);
     hTarget = clamp01(1 - Math.exp(-total / k));
+
+    // ---- Audio: lazy-init + drive stems (dynamic) ----
+    if (cfg.audioEnabled && String(cfg.audioPackId || '').trim()) {
+      void ensureStemPack();
+      if (stemPack && audioStarted) stemPack.setHype(clamp01(hTarget));
+    } else {
+      if (stemPack) {
+        try { stemPack.destroy(); } catch {}
+        stemPack = null;
+        audioStarted = false;
+        audioSig = '';
+      }
+    }
   }
 
   function destroy() {
+    try { stemPack?.destroy?.(); } catch {}
+    stemPack = null;
+    audioStarted = false;
+    audioSig = '';
+
     try { unsub?.(); } catch {}
     try { cancelAnimationFrame(raf); } catch {}
     try { window.removeEventListener('resize', onResize); } catch {}
@@ -463,13 +592,31 @@ function normalizeAnchor(a) {
 
 // total = sum(factions[].meter), clamped
 function computeTotal(snap, maxClamp) {
-  const factions = (snap && Array.isArray(snap.factions)) ? snap.factions : [];
-  let sum = 0;
-  for (const f of factions) {
-    const m = Number(f?.meter) || 0;
-    if (m > 0) sum += m;
+  const clampMax = clamp(maxClamp, 200, 6000);
+
+  // Preferred: factions[].meter (known in preview)
+  const factions = (snap && Array.isArray(snap.factions)) ? snap.factions : null;
+  if (factions && factions.length) {
+    let sum = 0;
+    for (const f of factions) {
+      const m = Number(f?.meter) || 0;
+      if (m > 0) sum += m;
+    }
+    return clamp(sum, 0, clampMax);
   }
-  return clamp(sum, 0, clamp(maxClamp, 200, 6000));
+
+  // Fallback: meters map/object (common on server snapshots)
+  const meters = snap && snap.meters;
+  if (meters && typeof meters === 'object') {
+    let sum = 0;
+    for (const k of Object.keys(meters)) {
+      const v = Number(meters[k]) || 0;
+      if (v > 0) sum += v;
+    }
+    return clamp(sum, 0, clampMax);
+  }
+
+  return 0;
 }
 
 function pickMixedColorFromSnap(snap, mixMode) {
