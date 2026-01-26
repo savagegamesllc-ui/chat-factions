@@ -63,17 +63,17 @@ function eventSubRoutes({ env }) {
 
   router.post('/twitch/eventsub', express.raw({ type: 'application/json' }), async (req, res) => {
     const secret = String(env.EVENTSUB_WEBHOOK_SECRET || '').trim();
-    if (!secret) return res.status(500).send('Missing EVENTSUB_WEBHOOK_SECRET');
+    if (!secret) return res.status(500).type('text/plain').send('Missing EVENTSUB_WEBHOOK_SECRET');
 
     const rawBody = Buffer.isBuffer(req.body) ? req.body : Buffer.from('');
     const v = verifyEventSub(req, rawBody, secret);
-    if (!v.ok) return res.status(403).send('Invalid signature');
+    if (!v.ok) return res.status(403).type('text/plain').send('Invalid signature');
 
     let payload;
     try {
       payload = JSON.parse(rawBody.toString('utf8') || '{}');
     } catch {
-      return res.status(400).send('Invalid JSON');
+      return res.status(400).type('text/plain').send('Invalid JSON');
     }
 
     const msgType = String(req.headers['twitch-eventsub-message-type'] || '');
@@ -82,9 +82,9 @@ function eventSubRoutes({ env }) {
     // Verification handshake
     if (msgType === 'webhook_callback_verification') {
       const challenge = payload?.challenge;
-      if (!challenge) return res.status(400).send('Missing challenge');
+      if (!challenge) return res.status(400).type('text/plain').send('Missing challenge');
       console.log('[eventsub] verification ok');
-      return res.status(200).send(String(challenge));
+      return res.status(200).type('text/plain').send(String(challenge));
     }
 
     // Revocation
