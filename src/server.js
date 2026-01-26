@@ -15,6 +15,7 @@ const { errorHandler } = require('./middleware/errorHandler');
 const { attachStreamer } = require('./middleware/attachStreamer');
 
 // Route modules
+const { eventSubRoutes } = require('./routes/eventSubRoutes');
 const { authRoutes } = require('./routes/authRoutes');
 const { dashboardRoutes } = require('./routes/dashboardRoutes');
 const { ownerRoutes } = require('./routes/ownerRoutes');
@@ -29,6 +30,7 @@ const { eventKeyRoutes } = require('./routes/eventKeyRoutes');
 const { eventApiPageRoutes } = require('./routes/eventApiPageRoutes');
 const { ownerStreamersRoutes } = require('./routes/ownerStreamersRoutes');
 const { startDecayLoop } = require('./services/decayLoopService');
+
 
 const app = express();
 
@@ -134,6 +136,7 @@ app.use(chatConfigRoutes);
 app.use(eventKeyRoutes);
 app.use(eventApiPageRoutes);
 app.use(ownerStreamersRoutes);
+app.use(eventSubRoutes({ env: process.env }));
 
 // 404
 app.use((req, res) => {

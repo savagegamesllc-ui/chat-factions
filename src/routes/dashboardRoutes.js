@@ -5,7 +5,9 @@ const express = require('express');
 const { requireStreamer } = require('../middleware/requireStreamer');
 const { getDashboardSummary } = require('../services/dashboardService');
 const { bustChatConfigCache } = require('../services/chatConfigService');
-
+const { ensureStreamerEventSub } = require('../services/eventSubSubscriptionService');
+const { prisma } = require('../db/prisma');
+const { getEffectiveEventConfig, saveEventConfig } = require('../services/eventConfigService');
 
 
 const {
@@ -235,6 +237,89 @@ router.delete('/admin/api/chat/aliases/:id', requireStreamer, async (req, res) =
   }
 });
 
+router.post('/admin/api/eventsub/ensure', requireStreamer, async (req, res) => {
+  try {
+    const streamer = await prisma.streamer.findUnique({
+      where: { id: String(req.session.streamerId) },
+      select: { twitchUserId: true }
+    });
+
+    if (!streamer?.twitchUserId) {
+      return res.status(400).json({ error: 'Missing twitchUserId for streamer. Re-auth via Twitch.' });
+    }
+
+    const out = await ensureStreamerEventSub(process.env, streamer.twitchUserId);
+    res.json(out);
+  } catch (err) {
+    console.error('[eventsub ensure] error', err?.detail || err?.message || err);
+    res.status(err.statusCode || 500).json({ error: err.message || 'Failed to ensure EventSub.' });
+  }
+});
+
+router.get('/admin/api/event-config', requireStreamer, async (req, res) => {
+  try {
+    const cfg = await getEffectiveEventConfig(req.session.streamerId);
+    res.json({ ok: true, config: cfg });
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ error: err.message || 'Failed to load event config.' });
+  }
+});
+
+router.put('/admin/api/event-config', requireStreamer, async (req, res) => {
+  try {
+    const cfg = req.body || {};
+    const out = await saveEventConfig(req.session.streamerId, cfg);
+    res.json(out);
+  } catch (err) {
+    res.status(err.statusCode || 400).json({ error: err.message || 'Failed to save event config.' });
+  }
+});
+
+const { prisma } = require('../db/prisma');
+const {
+  ensureStreamerWebhookSubscriptions,
+  getStreamerWebhookSubscriptions,
+} = require('../services/eventSubSubscriptionService');
+
+router.get('/admin/api/eventsub/status', requireStreamer, async (req, res) => {
+  try {
+    const s = await prisma.streamer.findUnique({
+      where: { id: String(req.session.streamerId) },
+      select: { twitchUserId: true },
+    });
+    if (!s?.twitchUserId) return res.status(400).json({ error: 'Missing twitchUserId; re-auth Twitch.' });
+
+    const out = await getStreamerWebhookSubscriptions(process.env, { twitchUserId: s.twitchUserId });
+    res.json(out);
+  } catch (err) {
+    console.error('[eventsub status] error', err?.detail || err?.message || err);
+    res.status(err.statusCode || 500).json({ error: err.message || 'Failed to load EventSub status.' });
+  }
+});
+
+router.post('/admin/api/eventsub/ensure', requireStreamer, async (req, res) => {
+  try {
+    const s = await prisma.streamer.findUnique({
+      where: { id: String(req.session.streamerId) },
+      select: { twitchUserId: true, twitchScopes: true },
+    });
+    if (!s?.twitchUserId) return res.status(400).json({ error: 'Missing twitchUserId; re-auth Twitch.' });
+
+    const out = await ensureStreamerWebhookSubscriptions(process.env, {
+      twitchUserId: s.twitchUserId,
+      twitchScopes: s.twitchScopes || [],
+    });
+
+    res.json(out);
+  } catch (err) {
+    console.error('[eventsub ensure] error', err?.detail || err?.message || err);
+    res.status(err.statusCode || 400).json({
+      error: err.message || 'Failed to ensure EventSub.',
+      missingScopes: err.missingScopes || undefined,
+      detail: err.detail || undefined,
+    });
+  }
+});
 
   return router;
 }

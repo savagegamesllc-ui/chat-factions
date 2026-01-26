@@ -75,6 +75,10 @@ model Streamer {
   // External event ingestion auth (game triggers, etc.)
   eventApiKey String? @unique
   externalReceipts ExternalEventReceipt[]
+
+    // Per-streamer EventSub → hype mapping/policy
+  eventConfig Json?
+
 }
 
 //
