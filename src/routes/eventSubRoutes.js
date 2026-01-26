@@ -18,7 +18,6 @@ function clampInt(n, lo, hi) {
 }
 
 function normalizeEvent(subType, ev) {
-  // Returns: { type: 'cheer'|'sub'|'gift'|'resub', value, meta }
   if (subType === 'channel.cheer') {
     return { type: 'cheer', value: Number(ev?.bits || 0), meta: ev };
   }
@@ -61,130 +60,150 @@ function mapDelta(eventCfg, normalized) {
 function eventSubRoutes({ env }) {
   const router = express.Router();
 
-  router.post('/twitch/eventsub', express.raw({ type: '*/*', limit: '2mb' }), async (req, res) => {
+  // IMPORTANT: accept ALL content-types so Twitch CLI verify-subscription works
+  router.post(
+    '/twitch/eventsub',
+    express.raw({ type: '*/*', limit: '2mb' }),
+    async (req, res) => {
+      const secret = String(env.EVENTSUB_WEBHOOK_SECRET || '').trim();
+      if (!secret) {
+        return res.status(500).type('text/plain').send('Missing EVENTSUB_WEBHOOK_SECRET');
+      }
 
-    const secret = String(env.EVENTSUB_WEBHOOK_SECRET || '').trim();
-    if (!secret) return res.status(500).type('text/plain').send('Missing EVENTSUB_WEBHOOK_SECRET');
+      // GUARANTEE raw body (prevents crashes + bad signatures)
+      if (!Buffer.isBuffer(req.body)) {
+        console.warn('[eventsub] non-raw body', {
+          bodyType: typeof req.body,
+          contentType: req.headers['content-type'],
+        });
+        return res.status(400).type('text/plain').send('Expected raw body');
+      }
 
-    const rawBody = Buffer.isBuffer(req.body) ? req.body : Buffer.from(req.body || '');
+      const rawBody = req.body;
 
+      const msgType = String(req.headers['twitch-eventsub-message-type'] || '');
+      const msgIdHdr = String(req.headers['twitch-eventsub-message-id'] || '');
 
-    const msgType = String(req.headers['twitch-eventsub-message-type'] || '');
-    const msgIdHdr = String(req.headers['twitch-eventsub-message-id'] || '');
-
-    // low-noise trace
-    console.log('[eventsub] inbound', {
-      type: msgType,
-      id: msgIdHdr ? msgIdHdr.slice(0, 12) : '',
-      bodyLen: rawBody.length,
-    });
-
-    const v = verifyEventSub(req, rawBody, secret);
-    if (!v.ok) return res.status(403).type('text/plain').send(v.reason || 'Invalid signature');
-
-    let payload;
-    try {
-      payload = JSON.parse(rawBody.toString('utf8') || '{}');
-    } catch {
-      return res.status(400).type('text/plain').send('Invalid JSON');
-    }
-
-    const msgId = String(req.headers['twitch-eventsub-message-id'] || v.messageId || '');
-
-    // Verification handshake
-    if (msgType === 'webhook_callback_verification') {
-      const challenge = payload?.challenge;
-      if (!challenge) return res.status(400).type('text/plain').send('Missing challenge');
-      console.log('[eventsub] verification ok', { id: msgId ? msgId.slice(0, 12) : '' });
-      return res.status(200).type('text/plain').send(String(challenge));
-    }
-
-    // Revocation
-    if (msgType === 'revocation') {
-      console.warn('[eventsub] revoked', {
-        type: payload?.subscription?.type,
-        status: payload?.subscription?.status,
-        reason: payload?.subscription?.status || 'revoked',
+      console.log('[eventsub] inbound', {
+        type: msgType,
+        id: msgIdHdr ? msgIdHdr.slice(0, 12) : '',
+        bodyLen: rawBody.length,
+        ct: String(req.headers['content-type'] || ''),
       });
+
+      const v = verifyEventSub(req, rawBody, secret);
+      if (!v.ok) {
+        return res.status(403).type('text/plain').send(v.reason || 'Invalid signature');
+      }
+
+      let payload;
+      try {
+        payload = JSON.parse(rawBody.toString('utf8') || '{}');
+      } catch {
+        return res.status(400).type('text/plain').send('Invalid JSON');
+      }
+
+      const msgId = String(req.headers['twitch-eventsub-message-id'] || v.messageId || '');
+
+      // 1) Verification handshake
+      if (msgType === 'webhook_callback_verification') {
+        const challenge = payload?.challenge;
+        if (!challenge) {
+          return res.status(400).type('text/plain').send('Missing challenge');
+        }
+        console.log('[eventsub] verification ok', {
+          id: msgId ? msgId.slice(0, 12) : '',
+        });
+        return res.status(200).type('text/plain').send(String(challenge));
+      }
+
+      // 2) Revocation
+      if (msgType === 'revocation') {
+        console.warn('[eventsub] revoked', {
+          type: payload?.subscription?.type,
+          status: payload?.subscription?.status,
+          reason: payload?.subscription?.status,
+        });
+        return res.sendStatus(204);
+      }
+
+      // 3) Notification
+      if (msgType !== 'notification') {
+        return res.sendStatus(204);
+      }
+
+      // Idempotency
+      if (msgId) {
+        const seen = await prisma.externalEventReceipt.findUnique({
+          where: { receiptKey: `eventsub:${msgId}` },
+          select: { receiptKey: true },
+        });
+        if (seen) return res.sendStatus(204);
+      }
+
+      const subType = payload?.subscription?.type;
+      const ev = payload?.event || {};
+
+      const broadcasterId =
+        ev?.broadcaster_user_id ||
+        payload?.subscription?.condition?.broadcaster_user_id ||
+        null;
+
+      if (!broadcasterId) return res.sendStatus(204);
+
+      const streamer = await prisma.streamer.findUnique({
+        where: { twitchUserId: String(broadcasterId) },
+        select: { id: true },
+      });
+
+      if (!streamer) return res.sendStatus(204);
+
+      const eventCfg = await getEffectiveEventConfig(streamer.id);
+      if (eventCfg.enabled === false) return res.sendStatus(204);
+
+      const normalized = normalizeEvent(subType, ev);
+      if (!normalized) return res.sendStatus(204);
+
+      const session = await getOrCreateActiveSession(streamer.id);
+
+      const factionKey = await resolveFactionKey({
+        streamerId: streamer.id,
+        sessionId: session.id,
+        eventCfg,
+      });
+
+      const delta = mapDelta(eventCfg, normalized);
+      if (!factionKey || delta <= 0) return res.sendStatus(204);
+
+      // Record receipt
+      if (msgId) {
+        try {
+          await prisma.externalEventReceipt.create({
+            data: {
+              streamerId: streamer.id,
+              receiptKey: `eventsub:${msgId}`,
+              payload,
+            },
+          });
+        } catch (_) {}
+      }
+
+      try {
+        await addHype(streamer.id, factionKey, delta, 'eventsub', {
+          subType,
+          broadcasterId,
+          normalized,
+        });
+
+        const snap = await getMetersSnapshot(streamer.id);
+        broadcast(streamer.id, 'meters', snap);
+      } catch (e) {
+        console.error('[eventsub] apply error', e?.message || e);
+      }
+
       return res.sendStatus(204);
     }
-
-    // Notifications
-    if (msgType !== 'notification') return res.sendStatus(204);
-
-    // Dedupe using msg id (important)
-    if (msgId) {
-      const seen = await prisma.externalEventReceipt.findUnique({
-        where: { receiptKey: `eventsub:${msgId}` },
-        select: { receiptKey: true },
-      });
-      if (seen) return res.sendStatus(204);
-    }
-
-    const subType = payload?.subscription?.type;
-    const ev = payload?.event || {};
-
-    const broadcasterId =
-      ev?.broadcaster_user_id ||
-      payload?.subscription?.condition?.broadcaster_user_id ||
-      null;
-
-    if (!broadcasterId) return res.sendStatus(204);
-
-    const streamer = await prisma.streamer.findUnique({
-      where: { twitchUserId: String(broadcasterId) },
-      select: { id: true },
-    });
-
-    if (!streamer) return res.sendStatus(204);
-
-    const eventCfg = await getEffectiveEventConfig(streamer.id);
-    if (eventCfg.enabled === false) return res.sendStatus(204);
-
-    const normalized = normalizeEvent(subType, ev);
-    if (!normalized) return res.sendStatus(204);
-
-    const session = await getOrCreateActiveSession(streamer.id);
-
-    const factionKey = await resolveFactionKey({
-      streamerId: streamer.id,
-      sessionId: session.id,
-      eventCfg,
-    });
-
-    const delta = mapDelta(eventCfg, normalized);
-    if (!factionKey || delta <= 0) return res.sendStatus(204);
-
-    // Record receipt before processing (best-effort)
-    if (msgId) {
-      try {
-        await prisma.externalEventReceipt.create({
-          data: {
-            streamerId: streamer.id,
-            receiptKey: `eventsub:${msgId}`,
-            payload: payload,
-          },
-        });
-      } catch (_) {
-        // ignore unique race
-      }
-    }
-
-    try {
-      await addHype(streamer.id, factionKey, delta, 'eventsub', {
-        subType,
-        broadcasterId,
-        normalized,
-      });
-
-      const snap = await getMetersSnapshot(streamer.id);
-      broadcast(streamer.id, 'meters', snap);
-    } catch (e) {
-      console.error('[eventsub] apply error', e?.message || e);
-    }
-
-    return res.sendStatus(204);
-  });
+  );
 
   return router;
 }
