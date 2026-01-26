@@ -193,6 +193,15 @@ async function startChatForStreamer(streamerId) {
         self: !!self,
       });
 
+      // 🔥 HARD PROOF: emit a tiny debug meter event so we can see twitch-chat path end-to-end
+      broadcast(streamer.id, 'meters', {
+        debugFrom: 'twitchChatService',
+        at: new Date().toISOString(),
+        factionKey: parsed.factionKey,
+        delta: capped,
+        user: tags?.username || null
+      });
+
       console.log('[cmd] hype applied', {
         streamerId: streamer.id,
         factionKey: parsed.factionKey,
