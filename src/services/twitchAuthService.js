@@ -79,12 +79,20 @@ function buildTwitchAuthorizeUrl(state) {
   const clientId = readCfg('twitchClientId', 'TWITCH_CLIENT_ID');
   const redirectUri = readCfg('twitchRedirectUri', 'TWITCH_REDIRECT_URI');
 
-  // You can tune scopes later; these are typical for chat + user identity.
-  // - user:read:email lets you get email when available
-  // - chat:read / chat:edit are common for bot/chat tools (depends on your use)
+  // Default scopes for Chat Factions
+  // Chat + identity + monetization (EventSub)
+  const defaultScopes = [
+    'user:read:email',
+    'chat:read',
+    'chat:edit',
+    'bits:read',
+    'channel:read:subscriptions',
+  ];
+
+  // Allow override via env, but fall back to defaults
   const scopeStr =
     readCfg('twitchScopes', 'TWITCH_SCOPES') ||
-    'user:read:email chat:read chat:edit';
+    defaultScopes.join(' ');
 
   const u = new URL('https://id.twitch.tv/oauth2/authorize');
   u.searchParams.set('client_id', clientId);
@@ -92,11 +100,13 @@ function buildTwitchAuthorizeUrl(state) {
   u.searchParams.set('response_type', 'code');
   u.searchParams.set('scope', scopeStr);
   u.searchParams.set('state', String(state || ''));
-  // Optional: force showing the auth prompt
+
+  // Optional but useful when adding new scopes:
   // u.searchParams.set('force_verify', 'true');
 
   return u.toString();
 }
+
 
 /**
  * Fetch Twitch user from Helix using access token.
