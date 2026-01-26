@@ -93,8 +93,8 @@ async function addHype(streamerId, factionKey, delta, source = 'chat', meta = {}
     data: {
       streamerId: sid,
       type: 'hype',
-      source: String(source || 'chat'),
       payload: {
+        source: String(source || 'chat'),
         factionKey: key,
         delta: d,
         meter: next,
