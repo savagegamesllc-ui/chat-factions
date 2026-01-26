@@ -32,84 +32,75 @@ export const meta = {
 
     // Hype mapping (NEW, matches your Crownfall standard)
     hypeK: 150,                // smaller = reacts sooner
-    maxTotalClamp: 2200,       // safety clamp for very large totals
-    hypeSmoothing: 0.18,       // seconds-ish. higher = smoother
+    maxTotalClamp: 2200,       // safety clamp to keep totals reasonable
+    hypeSmoothing: 0.18,       // seconds to smooth
 
-    // Ribbons
+    // Aesthetic: global
+    alpha: 0.95,               // 0..1 overall alpha
+    glow: 0.85,                // 0..1 glow intensity
+    backgroundDim: 0.06,       // 0..0.6 dim behind edges
+    padding: 18,               // px inset from edge
+
+    // Ribbons (edge flow)
     ribbonCount: 3,            // 1..6
-    ribbonSpeed: 0.8,          // 0.1..2
-    ribbonWidth: 18,           // px
-    ribbonTurbulence: 0.55,    // 0..1
-    ribbonAlpha: 0.65,         // 0..1
+    ribbonWidth: 22,           // 6..60
+    ribbonSpeed: 0.9,          // 0.1..2.0
+    ribbonTurbulence: 0.7,     // 0..1
+    ribbonAlpha: 0.55,         // 0..1
 
-    // Sigil blooms (corners/regions)
-    sigilSize: 120,            // px
-    sigilGlow: 0.9,            // 0..1
-    sigilDetail: 0.65,         // 0..1 (more lines)
-    regionDance: 0.85,         // 0..1 (how much it hops around regions)
+    // Sigils (corner/region hops)
+    sigilCount: 4,             // 1..8
+    sigilSize: 120,            // 40..220
+    sigilSpin: 0.9,            // 0..2
+    sigilHop: 0.75,            // 0..1
+    regionDance: 0.65,         // 0..1 (how much bursts move regions)
 
-    // Bursts
-    burstRate: 0.6,            // baseline bursts/sec when hype is moving
-    burstBoost: 2.2,           // added bursts/sec at high hype
-    burstParticles: 46,        // particles per burst
-    burstLife: 0.9,            // sec
-    burstSpread: 1.0,          // 0..2
+    // Bursts (particles)
+    burstRate: 3.2,            // bursts/sec base
+    burstBoost: 2.2,           // additional bursts/sec at max hype
+    burstParticles: 46,        // 8..140 per burst (scaled by hype + tier + headroom)
+    burstLife: 0.85,           // seconds (0.2..2.0)
+    burstSpread: 1.0,          // 0.2..2.0
+    maxParticles: 2600,        // safety cap (400..6000)
 
-    // Global visuals
-    glow: 0.85,                // 0..1
-    alpha: 0.95,               // 0..1
-    padding: 10,               // px inset from edge
-    backgroundDim: 0.0,        // 0..0.6 dim behind edges
-
-    // Tier 3 polish (NEW)
-    chromaSplit: 0.75,         // 0..2 subtle RGB offset at max hype
-    pulseStrobe: 0.0,          // 0..1 (keep 0 by default; can be intense)
-    maxParticles: 2600         // hard cap
+    // Tier 3 extras
+    chromaSplit: 1.2,          // 0..2
+    pulseStrobe: 0.0           // 0..1 (kept default 0 for readability)
   },
 
-  controls: [
-    { key: 'placement', label: 'Placement', type: 'select', options: [
-      { label: 'Edges', value: 'edges' },
-      { label: 'Bottom', value: 'bottom' }
-    ], default: 'edges' },
+  // Optional UI schema (used by your dashboard if present)
+  schema: [
+    { key: 'placement', label: 'Placement', type: 'select', options: ['edges', 'bottom'], default: 'edges' },
+    { key: 'mixMode', label: 'Mix Mode', type: 'select', options: ['weighted', 'winner'], default: 'weighted' },
+    { key: 'intensity', label: 'Intensity', type: 'number', min: 0, max: 2, step: 0.05, default: 1.0 },
 
-    { key: 'mixMode', label: 'Faction Mix', type: 'select', options: [
-      { label: 'Weighted', value: 'weighted' },
-      { label: 'Winner', value: 'winner' }
-    ], default: 'weighted' },
+    { key: 'hypeK', label: 'Hype K', type: 'number', min: 40, max: 600, step: 10, default: 150 },
+    { key: 'maxTotalClamp', label: 'Max Total Clamp', type: 'number', min: 500, max: 5000, step: 50, default: 2200 },
+    { key: 'hypeSmoothing', label: 'Hype Smoothing', type: 'number', min: 0.05, max: 0.5, step: 0.01, default: 0.18 },
 
-    { key: 'intensity', label: 'Intensity', type: 'range', min: 0, max: 2, step: 0.05, default: 1.0 },
+    { key: 'alpha', label: 'Alpha', type: 'number', min: 0, max: 1, step: 0.01, default: 0.95 },
+    { key: 'glow', label: 'Glow', type: 'number', min: 0, max: 1, step: 0.01, default: 0.85 },
+    { key: 'backgroundDim', label: 'Background Dim', type: 'number', min: 0, max: 0.6, step: 0.01, default: 0.06 },
+    { key: 'padding', label: 'Padding', type: 'number', min: 0, max: 60, step: 1, default: 18 },
 
-    // Hype mapping
-    { key: 'hypeK', label: 'Hype Scale (k)', type: 'number', min: 40, max: 600, step: 5, default: 150 },
-    { key: 'maxTotalClamp', label: 'Max Total Clamp', type: 'number', min: 200, max: 6000, step: 50, default: 2200 },
-    { key: 'hypeSmoothing', label: 'Hype Smoothing', type: 'range', min: 0.05, max: 0.5, step: 0.01, default: 0.18 },
+    { key: 'ribbonCount', label: 'Ribbon Count', type: 'number', min: 1, max: 6, step: 1, default: 3 },
+    { key: 'ribbonWidth', label: 'Ribbon Width', type: 'number', min: 6, max: 60, step: 1, default: 22 },
+    { key: 'ribbonSpeed', label: 'Ribbon Speed', type: 'number', min: 0.1, max: 2.0, step: 0.05, default: 0.9 },
+    { key: 'ribbonTurbulence', label: 'Ribbon Turbulence', type: 'number', min: 0, max: 1, step: 0.01, default: 0.7 },
+    { key: 'ribbonAlpha', label: 'Ribbon Alpha', type: 'number', min: 0, max: 1, step: 0.01, default: 0.55 },
 
-    { key: 'ribbonCount', label: 'Ribbon Count', type: 'range', min: 1, max: 6, step: 1, default: 3 },
-    { key: 'ribbonSpeed', label: 'Ribbon Speed', type: 'range', min: 0.1, max: 2, step: 0.05, default: 0.8 },
-    { key: 'ribbonWidth', label: 'Ribbon Width', type: 'range', min: 6, max: 42, step: 1, default: 18 },
-    { key: 'ribbonTurbulence', label: 'Ribbon Turbulence', type: 'range', min: 0, max: 1, step: 0.01, default: 0.55 },
-    { key: 'ribbonAlpha', label: 'Ribbon Opacity', type: 'range', min: 0.05, max: 1, step: 0.01, default: 0.65 },
+    { key: 'sigilCount', label: 'Sigil Count', type: 'number', min: 1, max: 8, step: 1, default: 4 },
+    { key: 'sigilSize', label: 'Sigil Size', type: 'number', min: 40, max: 220, step: 2, default: 120 },
+    { key: 'sigilSpin', label: 'Sigil Spin', type: 'number', min: 0, max: 2, step: 0.05, default: 0.9 },
+    { key: 'sigilHop', label: 'Sigil Hop', type: 'number', min: 0, max: 1, step: 0.01, default: 0.75 },
+    { key: 'regionDance', label: 'Region Dance', type: 'number', min: 0, max: 1, step: 0.01, default: 0.65 },
 
-    { key: 'sigilSize', label: 'Sigil Size', type: 'range', min: 50, max: 260, step: 1, default: 120 },
-    { key: 'sigilGlow', label: 'Sigil Glow', type: 'range', min: 0, max: 1, step: 0.01, default: 0.9 },
-    { key: 'sigilDetail', label: 'Sigil Detail', type: 'range', min: 0, max: 1, step: 0.01, default: 0.65 },
-    { key: 'regionDance', label: 'Region Dance', type: 'range', min: 0, max: 1, step: 0.01, default: 0.85 },
-
-    { key: 'burstRate', label: 'Burst Rate', type: 'range', min: 0, max: 5, step: 0.05, default: 0.6 },
-    { key: 'burstBoost', label: 'Burst Boost', type: 'range', min: 0, max: 6, step: 0.05, default: 2.2 },
-    { key: 'burstParticles', label: 'Burst Particles', type: 'range', min: 8, max: 140, step: 1, default: 46 },
-    { key: 'burstLife', label: 'Burst Life (s)', type: 'range', min: 0.2, max: 2.0, step: 0.05, default: 0.9 },
-    { key: 'burstSpread', label: 'Burst Spread', type: 'range', min: 0.2, max: 2.0, step: 0.05, default: 1.0 },
-
-    { key: 'glow', label: 'Glow', type: 'range', min: 0, max: 1, step: 0.01, default: 0.85 },
-    { key: 'alpha', label: 'Opacity', type: 'range', min: 0.05, max: 1, step: 0.01, default: 0.95 },
-    { key: 'padding', label: 'Padding', type: 'range', min: 0, max: 40, step: 1, default: 10 },
-    { key: 'backgroundDim', label: 'Background Dim', type: 'range', min: 0, max: 0.6, step: 0.01, default: 0.0 },
-
-    { key: 'chromaSplit', label: 'Chroma Split', type: 'range', min: 0, max: 2, step: 0.05, default: 0.75 },
-    { key: 'pulseStrobe', label: 'Pulse Strobe', type: 'range', min: 0, max: 1, step: 0.01, default: 0.0 },
-    { key: 'maxParticles', label: 'Max Particles', type: 'number', min: 400, max: 6000, step: 50, default: 2600 },
+    { key: 'burstRate', label: 'Burst Rate', type: 'number', min: 0, max: 10, step: 0.1, default: 3.2 },
+    { key: 'burstBoost', label: 'Burst Boost', type: 'number', min: 0, max: 10, step: 0.1, default: 2.2 },
+    { key: 'burstParticles', label: 'Burst Particles', type: 'number', min: 8, max: 140, step: 1, default: 46 },
+    { key: 'burstLife', label: 'Burst Life', type: 'number', min: 0.2, max: 2.0, step: 0.05, default: 0.85 },
+    { key: 'burstSpread', label: 'Burst Spread', type: 'number', min: 0.2, max: 2.0, step: 0.05, default: 1.0 },
+    { key: 'maxParticles', label: 'Max Particles', type: 'number', min: 400, max: 6000, step: 50, default: 2600 }
   ]
 };
 
@@ -144,6 +135,21 @@ export function init({ root, config, api }) {
   let accMs = 0;
   const startMs = lastMs;
 
+  // cached canvas size (avoid layout work every frame; OBS-friendly)
+  let W = 1, H = 1;
+  function doResize() {
+    const { w, h, dpr } = resizeCanvas(canvas);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    W = w; H = h;
+  }
+
+  const ro = ('ResizeObserver' in window)
+    ? new ResizeObserver(() => doResize())
+    : null;
+
+  try { ro?.observe(container); } catch {}
+  doResize();
+
   // subscribe
   const unsub = api.onMeters((snap) => {
     latestSnap = snap || { factions: [] };
@@ -159,7 +165,7 @@ export function init({ root, config, api }) {
     motionVel += clamp01(d / 70) * 1.15;
   });
 
-  const onResize = () => resize();
+  const onResize = () => doResize();
   window.addEventListener('resize', onResize, { passive: true });
 
   function tierFromH(h) {
@@ -167,12 +173,6 @@ export function init({ root, config, api }) {
     if (h < 0.35) return 1;
     if (h < 0.70) return 2;
     return 3;
-  }
-
-  function resize() {
-    const { w, h, dpr } = resizeCanvas(canvas);
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    return { w, h };
   }
 
   function tick(nowMs) {
@@ -190,7 +190,7 @@ export function init({ root, config, api }) {
     const dt = Math.min(0.05, accMs / 1000);
     accMs = 0;
 
-    const { w, h } = resize();
+    const w = W, h = H;
     const t = (nowMs - startMs) / 1000;
 
     // smooth hype
@@ -217,12 +217,20 @@ export function init({ root, config, api }) {
       ctx.save();
       ctx.globalAlpha = dim;
       ctx.fillStyle = '#000';
-      if (cfg.placement === 'bottom') ctx.fillRect(0, h * 0.72, w, h * 0.28);
-      else ctx.fillRect(0, 0, w, h);
+      if (cfg.placement === 'bottom') {
+        const band = Math.max(0, h * 0.23);
+        ctx.fillRect(0, h - band, w, band);
+      } else {
+        const band = Math.max(0, Math.min(140, 0.085 * Math.min(w, h) + 60 * hSmooth));
+        ctx.fillRect(0, 0, w, band);
+        ctx.fillRect(0, h - band, w, band);
+        ctx.fillRect(0, 0, band, h);
+        ctx.fillRect(w - band, 0, band, h);
+      }
       ctx.restore();
     }
 
-    // spawn bursts based on motion + hype
+    // bursts spawn scaling by hype & motion
     const burstRate =
       (cfg.burstRate + cfg.burstBoost * hSmooth) *
       (0.25 + motion * 1.25) *
@@ -261,18 +269,28 @@ export function init({ root, config, api }) {
   let burstCarry = 0;
 
   function spawnBursts(dt, w, h, t, mixedHex, burstRate, tier) {
-    burstCarry += burstRate * dt;
+    const maxP = clampInt(cfg.maxParticles, 400, 6000);
+
+    // Budget-aware spawning:
+    // As we approach max particles, taper spawn rate hard to avoid churn (push+splice storms).
+    const remaining = Math.max(0, maxP - particles.length);
+    const budget01 = remaining / maxP; // 0..1
+
+    // No spawn when basically full; taper earlier for stability.
+    const rateScale = clamp01((budget01 - 0.08) / 0.30);
+
+    burstCarry += (burstRate * rateScale) * dt;
+
     const spawnN = Math.min(8, Math.floor(burstCarry));
     burstCarry -= spawnN;
 
-    for (let i = 0; i < spawnN; i++) spawnBurst(w, h, t, tier);
+    for (let i = 0; i < spawnN; i++) spawnBurst(w, h, t, tier, remaining);
 
-    // perf cap
-    const maxP = clampInt(cfg.maxParticles, 400, 6000);
+    // hard cap (should trigger rarely now)
     if (particles.length > maxP) particles.splice(0, particles.length - maxP);
   }
 
-  function spawnBurst(w, h, t, tier) {
+  function spawnBurst(w, h, t, tier, remainingBudget) {
     // regions: corners + mid edges
     const regions = [
       { x: 0.14, y: 0.18 }, { x: 0.86, y: 0.18 },
@@ -302,7 +320,13 @@ export function init({ root, config, api }) {
     const intensity = clamp(cfg.intensity, 0, 2);
 
     const countBase = clampInt(cfg.burstParticles, 8, 140);
-    const count = Math.floor(countBase * (0.55 + hype * 0.95) * (0.85 + 0.18 * tier));
+
+    // Scale down particles-per-burst if we're low on headroom
+    const maxP = clampInt(cfg.maxParticles, 400, 6000);
+    const headroom01 = clamp01((remainingBudget || 0) / maxP);
+    const countScale = 0.35 + 0.65 * headroom01; // never drop below 35%
+
+    const count = Math.floor(countBase * countScale * (0.55 + hype * 0.95) * (0.85 + 0.18 * tier));
     const lifeS = clamp(cfg.burstLife, 0.2, 2.0) * (0.7 + Math.random() * 0.6) * (0.9 + 0.15 * tier);
     const spread = clamp(cfg.burstSpread, 0.2, 2.0) * (0.7 + hype * 1.1) * (0.85 + 0.10 * tier);
 
@@ -373,20 +397,36 @@ export function init({ root, config, api }) {
     const alphaBase = clamp01(cfg.alpha);
     const glow = clamp01(cfg.glow) * (0.55 + hype * 1.05) * (0.85 + 0.20 * tier);
 
+    const maxP = clampInt(cfg.maxParticles, 400, 6000);
+    const load = maxP > 0 ? (particles.length / maxP) : 0;
+
+    // Adaptive quality: when we're heavily loaded, draw fewer particles
+    // to preserve frame time while keeping the overall look.
+    const stride =
+      load > 0.92 ? 3 :
+      load > 0.82 ? 2 :
+      1;
+
     ctx.save();
     ctx.globalCompositeOperation = 'lighter';
     ctx.shadowColor = hex;
 
+    // IMPORTANT: don't vary shadowBlur per particle when loaded
+    const shadowBase = 10 + 28 * glow;
+    const heavyBlur = (stride === 1);
+    ctx.shadowBlur = heavyBlur ? shadowBase : Math.min(18, shadowBase);
+
     const strobe = clamp01(cfg.pulseStrobe || 0) * (tier === 3 ? 1 : 0);
     const strobePulse = strobe > 0 ? (0.7 + 0.3 * Math.sin(performance.now() * 0.03)) : 1;
 
-    for (const p of particles) {
+    for (let idx = 0; idx < particles.length; idx += stride) {
+      const p = particles[idx];
       const k = 1 - p.age / p.life;
       const a = alphaBase * (0.10 + 0.90 * k) * strobePulse;
 
-      // hue shimmer at tier 2/3 for extra "dance"
+      // hue shimmer at tier 2/3 for extra "dance" (only at full quality)
       let fill = hex;
-      if (tier >= 2) {
+      if (tier >= 2 && stride === 1) {
         const hue = frac(p.hueSeed + performance.now() * 0.00012 + (1 - k) * 0.2);
         const rgb = hsvToRgb(hue, 0.95, 1);
         fill = `rgba(${(rgb.r * 255) | 0},${(rgb.g * 255) | 0},${(rgb.b * 255) | 0},1)`;
@@ -394,7 +434,9 @@ export function init({ root, config, api }) {
 
       ctx.globalAlpha = a;
       ctx.fillStyle = fill;
-      ctx.shadowBlur = 10 + 28 * glow * k;
+
+      // only do per-particle blur when not overloaded
+      if (heavyBlur) ctx.shadowBlur = shadowBase * k;
 
       ctx.beginPath();
       ctx.arc(p.x, p.y, Math.max(0.6, p.size * (0.6 + 0.9 * k)), 0, Math.PI * 2);
@@ -426,223 +468,217 @@ export function init({ root, config, api }) {
     ctx.shadowBlur = 12 + 34 * glow;
 
     for (let i = 0; i < count; i++) {
-      const phase = t * speed + i * 0.65;
-      const a = alpha * (0.35 + 0.65 * (0.35 + hype * 0.85));
+      const phase = i / count;
+      const amp = (0.40 + 0.55 * turb) * (0.35 + 0.65 * (0.3 + 0.7 * hype));
+      const wob = (0.25 + 0.85 * turb) * (0.55 + 0.45 * motion);
 
-      ctx.globalAlpha = a;
-      ctx.lineWidth = width * (0.52 + 0.48 * Math.sin(phase * 1.8 + i));
+      ctx.globalAlpha = alpha * (0.55 + 0.45 * (1 - phase));
+      ctx.lineWidth = width * (0.75 + 0.5 * (1 - phase));
 
       if (cfg.placement === 'bottom') {
-        const y0 = h - pad - (i + 1) * (width * 0.7);
-        drawWaveLine(ctx, pad, y0, w - pad, y0, phase, turb, true, tier);
-      } else {
-        const inset = pad + i * (width * 0.55);
-        drawEdgeRibbon(ctx, w, h, inset, phase, turb, tier);
-      }
-
-      // Tier 3: add a faint “ghost” ribbon offset for more depth
-      if (tier === 3) {
-        ctx.save();
-        ctx.globalAlpha = a * 0.22;
-        ctx.shadowBlur = (12 + 34 * glow) * 0.65;
-        const off = 2.5 + 2.5 * Math.sin(phase * 1.2);
-        if (cfg.placement === 'bottom') {
-          const y0 = h - pad - (i + 1) * (width * 0.7) + off;
-          drawWaveLine(ctx, pad, y0, w - pad, y0, phase + 1.6, turb * 0.9, true, tier);
-        } else {
-          const inset = pad + i * (width * 0.55) + off;
-          drawEdgeRibbon(ctx, w, h, inset, phase + 1.6, turb * 0.9, tier);
+        const yBase = h - pad - width * 0.45;
+        const steps = 32;
+        ctx.beginPath();
+        for (let s = 0; s <= steps; s++) {
+          const u = s / steps;
+          const x = lerp(pad, w - pad, u);
+          const n = Math.sin((u * 6.5 + t * speed * 1.25 + phase * 4.2) * Math.PI * 2) *
+                    Math.cos((u * 2.1 + t * speed * 0.75 + phase * 2.8) * Math.PI * 2);
+          const y = yBase - (n * amp * 26 + Math.sin(t * speed * 2.2 + u * 9.0) * wob * 12);
+          if (s === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
         }
-        ctx.restore();
+        ctx.stroke();
+      } else {
+        // edges: draw a loop-ish ribbon that "hugs" the frame
+        const steps = 48;
+        ctx.beginPath();
+        for (let s = 0; s <= steps; s++) {
+          const u = s / steps;
+
+          // 0..1 around border
+          const p = (u + t * speed * 0.06 + phase * 0.17) % 1;
+          const pos = borderPoint(p, w, h, pad);
+
+          const n = Math.sin((p * 7.0 + t * speed * 0.8 + phase * 6.0) * Math.PI * 2) *
+                    Math.cos((p * 2.6 + t * speed * 0.55) * Math.PI * 2);
+
+          const nx = pos.nx, ny = pos.ny;
+          const off = (n * amp * 22) + Math.sin(t * speed * 1.6 + p * 10.0) * wob * 10;
+
+          const x = pos.x + nx * off;
+          const y = pos.y + ny * off;
+
+          if (s === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        }
+        ctx.stroke();
       }
     }
 
     ctx.restore();
   }
 
-  function drawEdgeRibbon(ctx, w, h, inset, phase, turb, tier) {
-    const left = inset;
-    const right = w - inset;
-    const top = inset;
-    const bottom = h - inset;
-
-    drawWaveLine(ctx, left, top, right, top, phase + 0.0, turb, true, tier);
-    drawWaveLine(ctx, right, top, right, bottom, phase + 1.7, turb, false, tier);
-    drawWaveLine(ctx, right, bottom, left, bottom, phase + 3.4, turb, true, tier);
-    drawWaveLine(ctx, left, bottom, left, top, phase + 5.1, turb, false, tier);
-  }
-
-  function drawWaveLine(ctx, x1, y1, x2, y2, phase, turb, horizontal, tier) {
-    // steps fixed for perf; slight increase at higher tiers
-    const steps = (tier >= 2) ? 30 : 26;
-
-    ctx.beginPath();
-    for (let i = 0; i <= steps; i++) {
-      const p = i / steps;
-      const x = x1 + (x2 - x1) * p;
-      const y = y1 + (y2 - y1) * p;
-
-      const wob =
-        Math.sin(phase * 2.1 + p * 8.0) * (6 + 18 * turb) +
-        Math.sin(phase * 3.7 + p * 15.0) * (2 + 8 * turb) +
-        (tier >= 2 ? Math.sin(phase * 5.1 + p * 22.0) * (1 + 5 * turb) : 0);
-
-      const xx = horizontal ? x : x + wob;
-      const yy = horizontal ? y + wob : y;
-
-      if (i === 0) ctx.moveTo(xx, yy);
-      else ctx.lineTo(xx, yy);
-    }
-    ctx.stroke();
-  }
-
   // ---- sigils ----
   function drawSigils(ctx, w, h, t, hex, hype, motion, tier) {
-    const sizeBase = clamp(cfg.sigilSize, 50, 320) * (0.75 + hype * 0.6) * (0.9 + 0.10 * tier);
-    const glow = clamp01(cfg.sigilGlow) * (0.5 + hype * 0.95) * (0.9 + 0.15 * tier);
-    const detail = clamp01(cfg.sigilDetail) * (0.85 + 0.12 * tier);
-    const dance = clamp01(cfg.regionDance);
+    const pad = clamp(cfg.padding, 0, 60);
+    const baseCount = clampInt(cfg.sigilCount, 1, 8);
+    const count = clampInt(baseCount + (tier >= 3 ? 2 : tier >= 2 ? 1 : 0), 1, 8);
+
+    const size = clamp(cfg.sigilSize, 40, 220) * (0.75 + 0.5 * hype) * (0.9 + 0.12 * tier);
+    const spin = clamp(cfg.sigilSpin, 0, 2) * (0.35 + 1.2 * hype) * (0.85 + 0.18 * tier);
+    const hop = clamp01(cfg.sigilHop) * (0.25 + 0.9 * motion);
+
+    const glow = clamp01(cfg.glow) * (0.55 + hype * 0.95) * (0.85 + 0.20 * tier);
+    const alpha = clamp01(cfg.alpha) * (0.55 + 0.45 * smoothstep01(hype));
+
+    // anchor points
+    const anchors = (cfg.placement === 'bottom')
+      ? [
+          { x: 0.18, y: 0.82 },
+          { x: 0.50, y: 0.80 },
+          { x: 0.82, y: 0.82 },
+          { x: 0.35, y: 0.86 },
+          { x: 0.65, y: 0.86 }
+        ]
+      : [
+          { x: 0.12, y: 0.14 },
+          { x: 0.88, y: 0.14 },
+          { x: 0.12, y: 0.86 },
+          { x: 0.88, y: 0.86 },
+          { x: 0.50, y: 0.12 },
+          { x: 0.50, y: 0.88 },
+          { x: 0.12, y: 0.50 },
+          { x: 0.88, y: 0.50 }
+        ];
 
     ctx.save();
     ctx.globalCompositeOperation = 'lighter';
     ctx.strokeStyle = hex;
     ctx.shadowColor = hex;
-    ctx.shadowBlur = 18 + 48 * glow;
+    ctx.shadowBlur = 10 + 30 * glow;
 
-    const sigilCount = clampInt(2 + Math.floor(2 * clamp01(hype + motion)) + (tier >= 2 ? 1 : 0), 2, 6);
+    for (let i = 0; i < count; i++) {
+      const a = anchors[i % anchors.length];
 
-    for (let i = 0; i < sigilCount; i++) {
-      const ph = t * (0.6 + 1.4 * hype) + i * 1.7;
+      const x0 = a.x * w;
+      const y0 = a.y * h;
 
-      // hop strength
-      const hop = (Math.sin(ph * 1.4) * 0.5 + 0.5) * dance * (0.55 + 0.65 * motion);
+      // hop offset
+      const hopPhase = (i * 0.73 + t * (0.7 + 1.8 * hop)) % 1;
+      const hopAmt = Math.sin(hopPhase * Math.PI * 2) * (8 + 16 * hop) * (0.35 + 0.65 * hype);
 
-      let xN, yN;
-      if (cfg.placement === 'bottom') {
-        xN = 0.2 + 0.6 * frac(ph * 0.18 + i * 0.13);
-        yN = 0.76 + 0.18 * frac(ph * 0.22 + i * 0.41);
-      } else {
-        const pts = [
-          [0.14, 0.18], [0.86, 0.18], [0.14, 0.82], [0.86, 0.82],
-          [0.50, 0.14], [0.86, 0.50], [0.50, 0.86], [0.14, 0.50],
-        ];
-        const idx = Math.floor(frac(ph * 0.12 + i * 0.33) * pts.length);
-        const base = pts[idx];
-        xN = clamp01(base[0] + (Math.sin(ph * 2.1) * 0.12) * hop);
-        yN = clamp01(base[1] + (Math.cos(ph * 1.7) * 0.12) * hop);
-      }
+      // direction bias
+      const dx = (a.x < 0.5) ? -1 : 1;
+      const dy = (a.y < 0.5) ? -1 : 1;
 
-      const cx = xN * w;
-      const cy = yN * h;
+      const x = clamp(pad, w - pad, x0 + dx * hopAmt);
+      const y = clamp(pad, h - pad, y0 + dy * hopAmt);
 
-      const pulse = 0.55 + 0.45 * Math.sin(ph * 2.3 + hype * 3.0);
-      const a = clamp01(cfg.alpha) * (0.09 + 0.26 * pulse) * (0.6 + 0.7 * (0.35 + hype * 0.85));
-      ctx.globalAlpha = a;
+      const rot = t * spin + i * 0.9;
 
-      // Tier 3: “lock-in” on surges (quick micro-scale)
-      const surge = (tier === 3) ? (1 + 0.06 * Math.sin(t * 18 + i)) : 1;
-      drawSigil(ctx, cx, cy, sizeBase * (0.72 + 0.38 * pulse) * surge, detail, ph, tier);
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.rotate(rot);
+
+      ctx.globalAlpha = alpha * (0.60 + 0.40 * (1 - (i / count)));
+      ctx.lineWidth = 1.6 + 1.2 * glow;
+
+      // base: a rotating sigil star
+      drawSigilStar(ctx, size * (0.55 + 0.45 * (1 - i / count)), tier);
+
+      // tier details
+      if (tier >= 2) drawSigilInner(ctx, size * 0.42, tier);
+      if (tier >= 3) drawSigilRays(ctx, size * 0.65, t, i);
+
+      ctx.restore();
     }
 
     ctx.restore();
   }
 
-  function drawSigil(ctx, cx, cy, size, detail, ph, tier) {
-    // circles + spokes + rotating chords + (tier2+) star polygon
-    const rings = 2 + Math.floor(2 * detail);
-    const spokes = 6 + Math.floor(10 * detail);
-    const chords = 2 + Math.floor(4 * detail);
+  function drawSigilStar(ctx, r, tier) {
+    const points = tier >= 3 ? 7 : tier >= 2 ? 6 : 5;
+    const step = Math.PI * 2 / points;
 
-    ctx.save();
-    ctx.translate(cx, cy);
-    ctx.rotate(ph * 0.35);
-
-    // rings
-    for (let i = 0; i < rings; i++) {
-      const r = (size * 0.22) + (i / Math.max(1, rings - 1)) * (size * 0.48);
-      ctx.lineWidth = Math.max(1.0, size * (0.008 + 0.006 * detail));
-      ctx.beginPath();
-      ctx.arc(0, 0, r, 0, Math.PI * 2);
-      ctx.stroke();
-    }
-
-    // spokes
-    ctx.lineWidth = Math.max(1.0, size * (0.006 + 0.006 * detail));
-    for (let i = 0; i < spokes; i++) {
-      const a = (i / spokes) * Math.PI * 2;
-      const r1 = size * (0.10 + 0.08 * Math.sin(ph * 1.7 + i));
-      const r2 = size * (0.55 + 0.10 * Math.cos(ph * 1.2 + i * 0.4));
-      ctx.beginPath();
-      ctx.moveTo(Math.cos(a) * r1, Math.sin(a) * r1);
-      ctx.lineTo(Math.cos(a) * r2, Math.sin(a) * r2);
-      ctx.stroke();
-    }
-
-    // rotating chords
-    for (let i = 0; i < chords; i++) {
-      const a = ph * (0.7 + i * 0.12) + i;
-      const r = size * (0.42 + 0.10 * Math.sin(ph * 1.3 + i));
-      ctx.lineWidth = Math.max(1.0, size * (0.006 + 0.004 * detail));
-      ctx.beginPath();
-      ctx.moveTo(Math.cos(a) * r, Math.sin(a) * r);
-      ctx.lineTo(Math.cos(a + Math.PI * 0.62) * r, Math.sin(a + Math.PI * 0.62) * r);
-      ctx.stroke();
-    }
-
-    // Tier 2+: star polygon “bloom”
-    if (tier >= 2) {
-      const points = 7 + Math.floor(5 * clamp01(detail));
-      const inner = size * (0.18 + 0.06 * Math.sin(ph * 1.9));
-      const outer = size * (0.62 + 0.08 * Math.cos(ph * 1.2));
-      ctx.lineWidth = Math.max(1.0, size * 0.006);
-      ctx.beginPath();
-      for (let i = 0; i <= points; i++) {
-        const a = (i / points) * Math.PI * 2;
-        const r = (i % 2 === 0) ? outer : inner;
-        const x = Math.cos(a) * r;
-        const y = Math.sin(a) * r;
-        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-      }
-      ctx.stroke();
-    }
-
-    ctx.restore();
-  }
-
-  // Tier 3 chroma edge glow helper
-  function drawChromaEdgeGlow(ctx, w, h, t, hex, ox, oy, cs) {
-    const pad = clamp(cfg.padding, 0, 60);
-    const inset = pad + 2;
-    ctx.save();
-    ctx.strokeStyle = hex;
-    ctx.shadowColor = hex;
-    ctx.shadowBlur = 18 + 26 * cs;
-    ctx.lineWidth = 6 + 6 * cs;
-    ctx.globalAlpha = 0.16 + 0.08 * cs;
-    // simple rounded rect stroke with offsets (no expensive pathing)
-    roundedRectStroke(ctx, inset + ox, inset + oy, w - (inset * 2), h - (inset * 2), 18 + 12 * cs);
-    ctx.restore();
-  }
-
-  function roundedRectStroke(ctx, x, y, ww, hh, r) {
-    const rr = Math.min(r, ww * 0.25, hh * 0.25);
     ctx.beginPath();
-    ctx.moveTo(x + rr, y);
-    ctx.arcTo(x + ww, y, x + ww, y + hh, rr);
-    ctx.arcTo(x + ww, y + hh, x, y + hh, rr);
-    ctx.arcTo(x, y + hh, x, y, rr);
-    ctx.arcTo(x, y, x + ww, y, rr);
+    for (let i = 0; i <= points; i++) {
+      const a = i * step;
+      const rr = (i % 2 === 0) ? r : r * 0.55;
+      const x = Math.cos(a) * rr;
+      const y = Math.sin(a) * rr;
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
     ctx.closePath();
     ctx.stroke();
   }
 
+  function drawSigilInner(ctx, r, tier) {
+    ctx.save();
+    ctx.globalAlpha *= 0.65;
+
+    // inner ring
+    ctx.beginPath();
+    ctx.arc(0, 0, r, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // cross-lines
+    const k = tier >= 3 ? 4 : 3;
+    for (let i = 0; i < k; i++) {
+      const a = (i / k) * Math.PI * 2;
+      ctx.beginPath();
+      ctx.moveTo(Math.cos(a) * r, Math.sin(a) * r);
+      ctx.lineTo(Math.cos(a + Math.PI) * r, Math.sin(a + Math.PI) * r);
+      ctx.stroke();
+    }
+
+    ctx.restore();
+  }
+
+  function drawSigilRays(ctx, r, t, i) {
+    ctx.save();
+    ctx.globalAlpha *= 0.45;
+    const rays = 10;
+    for (let k = 0; k < rays; k++) {
+      const a = (k / rays) * Math.PI * 2 + Math.sin(t * 1.7 + i) * 0.2;
+      const rr = r * (0.75 + 0.25 * Math.sin(t * 2.3 + k));
+      ctx.beginPath();
+      ctx.moveTo(Math.cos(a) * (rr * 0.55), Math.sin(a) * (rr * 0.55));
+      ctx.lineTo(Math.cos(a) * rr, Math.sin(a) * rr);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  // Tier 3 “afterglow” edge accent
+  function drawChromaEdgeGlow(ctx, w, h, t, hex, ox, oy, cs) {
+    const pad = clamp(cfg.padding, 0, 60);
+    const steps = 64;
+
+    ctx.strokeStyle = hex;
+    ctx.lineWidth = 1.2 + 0.8 * cs;
+
+    // top edge wave
+    ctx.beginPath();
+    for (let i = 0; i <= steps; i++) {
+      const u = i / steps;
+      const x = u * w + ox;
+      const y = pad + 10 + Math.sin(t * 2.4 + u * 10.0) * (6 + 10 * cs) + oy;
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+  }
+
   // start
-  resize();
+  doResize();
   raf = requestAnimationFrame(tick);
 
   function setConfig(next) {
     cfg = normalizeConfig({ ...cfg, ...(next || {}) });
-    // recompute hTarget immediately from current latestSnap
+
+    // Recompute target hype from current total using new mapping
     total = computeTotal(latestSnap, cfg.maxTotalClamp);
     const k = clamp(cfg.hypeK, 40, 600);
     hTarget = clamp01(1 - Math.exp(-total / k));
@@ -651,6 +687,7 @@ export function init({ root, config, api }) {
   function destroy() {
     try { unsub?.(); } catch {}
     try { cancelAnimationFrame(raf); } catch {}
+    try { ro?.disconnect(); } catch {}
     try { window.removeEventListener('resize', onResize); } catch {}
     particles.length = 0;
     while (root.firstChild) root.removeChild(root.firstChild);
@@ -667,167 +704,173 @@ function ensureContainerAndCanvas(root, styleKey) {
   container.style.pointerEvents = 'none';
   container.style.zIndex = '999999';
   container.style.transform = 'translateZ(0)';
-  container.style.willChange = 'transform, opacity, filter';
+  container.style.willChange = 'transform';
 
-  const c = document.createElement('canvas');
-  c.dataset.style = styleKey || 'eventDance';
-  c.style.position = 'absolute';
-  c.style.left = '0';
-  c.style.top = '0';
-  c.style.width = '100%';
-  c.style.height = '100%';
-  c.style.pointerEvents = 'none';
-  c.style.display = 'block';
-  c.style.transform = 'translateZ(0)';
-  c.style.willChange = 'transform, opacity, filter';
+  const canvas = document.createElement('canvas');
+  canvas.id = `overlay-${styleKey}`;
+  canvas.style.width = '100%';
+  canvas.style.height = '100%';
+  canvas.style.display = 'block';
 
-  container.appendChild(c);
+  container.appendChild(canvas);
   root.appendChild(container);
-  return { container, canvas: c };
-}
 
-function resizeCanvas(canvas) {
-  const dpr = Math.min(2, window.devicePixelRatio || 1);
-  const rect = canvas.getBoundingClientRect();
-  const w = Math.max(1, Math.floor(rect.width * dpr));
-  const h = Math.max(1, Math.floor(rect.height * dpr));
-  if (canvas.width !== w || canvas.height !== h) {
-    canvas.width = w;
-    canvas.height = h;
-  }
-  return { w: w / dpr, h: h / dpr, dpr };
+  return { container, canvas };
 }
 
 function normalizeConfig(c) {
-  const out = { ...c };
-  out.placement = out.placement === 'bottom' ? 'bottom' : 'edges';
-  out.mixMode = out.mixMode === 'winner' ? 'winner' : 'weighted';
-  out.intensity = clamp(num(out.intensity, 1.0), 0, 2);
-
-  out.hypeK = clamp(num(out.hypeK, 150), 40, 600);
-  out.maxTotalClamp = clamp(num(out.maxTotalClamp, 2200), 200, 6000);
-  out.hypeSmoothing = clamp(num(out.hypeSmoothing, 0.18), 0.05, 0.5);
-
-  out.ribbonCount = clampInt(Math.round(num(out.ribbonCount, 3)), 1, 6);
-  out.ribbonSpeed = clamp(num(out.ribbonSpeed, 0.8), 0.1, 2);
-  out.ribbonWidth = clamp(num(out.ribbonWidth, 18), 6, 60);
-  out.ribbonTurbulence = clamp01(num(out.ribbonTurbulence, 0.55));
-  out.ribbonAlpha = clamp01(num(out.ribbonAlpha, 0.65));
-
-  out.sigilSize = clamp(num(out.sigilSize, 120), 50, 320);
-  out.sigilGlow = clamp01(num(out.sigilGlow, 0.9));
-  out.sigilDetail = clamp01(num(out.sigilDetail, 0.65));
-  out.regionDance = clamp01(num(out.regionDance, 0.85));
-
-  out.burstRate = clamp(num(out.burstRate, 0.6), 0, 5);
-  out.burstBoost = clamp(num(out.burstBoost, 2.2), 0, 6);
-  out.burstParticles = clampInt(Math.round(num(out.burstParticles, 46)), 8, 140);
-  out.burstLife = clamp(num(out.burstLife, 0.9), 0.2, 2.0);
-  out.burstSpread = clamp(num(out.burstSpread, 1.0), 0.2, 2.0);
-
-  out.glow = clamp01(num(out.glow, 0.85));
-  out.alpha = clamp01(num(out.alpha, 0.95));
-  out.padding = clamp(num(out.padding, 10), 0, 60);
-  out.backgroundDim = clamp(num(out.backgroundDim, 0.0), 0, 0.6);
-
-  out.chromaSplit = clamp(num(out.chromaSplit, 0.75), 0, 2);
-  out.pulseStrobe = clamp01(num(out.pulseStrobe, 0.0));
-  out.maxParticles = clamp(num(out.maxParticles, 2600), 400, 6000);
-
-  return out;
+  const cfg = { ...(c || {}) };
+  if (cfg.placement !== 'bottom') cfg.placement = 'edges';
+  if (cfg.mixMode !== 'winner') cfg.mixMode = 'weighted';
+  return cfg;
 }
 
-// total = sum(snap.factions[].meter) with clamp
-function computeTotal(snap, maxClamp) {
-  const factions = (snap && Array.isArray(snap.factions)) ? snap.factions : [];
+function computeTotal(snap, clampMax) {
+  const factions = (snap && snap.factions) ? snap.factions : [];
   let sum = 0;
-  for (const f of factions) {
-    const m = Number(f?.meter) || 0;
-    if (m > 0) sum += m;
-  }
-  return clamp(sum, 0, clamp(maxClamp, 200, 6000));
+  for (const f of factions) sum += Math.max(0, +f.meter || 0);
+  const maxC = clampInt(clampMax, 500, 5000);
+  return Math.min(sum, maxC);
 }
 
 function pickMixedColorFromSnap(snap, mixMode) {
-  const factions = (snap && Array.isArray(snap.factions)) ? snap.factions : [];
-  if (!factions.length) return '#78c8ff';
+  const factions = (snap && snap.factions) ? snap.factions : [];
+  if (!factions.length) return '#ffffff';
 
-  // weights are meters
-  let best = null;
-  let bestV = -Infinity;
+  if (mixMode === 'winner') {
+    let best = factions[0];
+    for (const f of factions) if ((+f.meter || 0) > (+best.meter || 0)) best = f;
+    return normalizeHex(best.color || '#ffffff');
+  }
 
-  let r = 0, g = 0, b = 0, sum = 0;
+  // weighted mix
+  let total = 0;
+  let r = 0, g = 0, b = 0;
+
   for (const f of factions) {
-    const v = Math.max(0, Number(f?.meter) || 0);
-    if (v <= 0) continue;
-
-    const col = normalizeHex(f?.colorHex || f?.color || f?.hex || '#78c8ff');
-    const rgb = hexToRgb(col);
-
-    if (v > bestV) { bestV = v; best = rgb; }
-
-    r += rgb.r * v; g += rgb.g * v; b += rgb.b * v;
-    sum += v;
+    const w = Math.max(0, +f.meter || 0);
+    total += w;
+    const rgb = hexToRgb(normalizeHex(f.color || '#ffffff'));
+    r += rgb.r * w;
+    g += rgb.g * w;
+    b += rgb.b * w;
   }
 
-  if (mixMode === 'winner' && best) {
-    return rgbToHex(best.r | 0, best.g | 0, best.b | 0);
-  }
+  if (total <= 0.0001) return normalizeHex(factions[0].color || '#ffffff');
 
-  if (sum <= 0) return '#78c8ff';
-  return rgbToHex(Math.round(r / sum), Math.round(g / sum), Math.round(b / sum));
+  r = Math.round(r / total);
+  g = Math.round(g / total);
+  b = Math.round(b / total);
+
+  return rgbToHex(r, g, b);
 }
 
-function hsvToRgb(h, s, v) {
-  const i = Math.floor(h * 6);
-  const f = h * 6 - i;
-  const p = v * (1 - s);
-  const q = v * (1 - f * s);
-  const t = v * (1 - (1 - f) * s);
-  let r, g, b;
-  switch (i % 6) {
-    case 0: r = v; g = t; b = p; break;
-    case 1: r = q; g = v; b = p; break;
-    case 2: r = p; g = v; b = t; break;
-    case 3: r = p; g = q; b = v; break;
-    case 4: r = t; g = p; b = v; break;
-    case 5: r = v; g = p; b = q; break;
+function borderPoint(p01, w, h, pad) {
+  // Traverse rectangle perimeter clockwise; returns point + outward normal.
+  const per = 2 * ((w - 2 * pad) + (h - 2 * pad));
+  const d = (p01 * per) % per;
+
+  const top = (w - 2 * pad);
+  const right = (h - 2 * pad);
+  const bottom = top;
+  const left = right;
+
+  if (d < top) {
+    // top edge
+    return { x: pad + d, y: pad, nx: 0, ny: -1 };
   }
-  return { r, g, b };
+  if (d < top + right) {
+    // right edge
+    const dd = d - top;
+    return { x: w - pad, y: pad + dd, nx: 1, ny: 0 };
+  }
+  if (d < top + right + bottom) {
+    // bottom edge
+    const dd = d - (top + right);
+    return { x: w - pad - dd, y: h - pad, nx: 0, ny: 1 };
+  }
+  // left edge
+  const dd = d - (top + right + bottom);
+  return { x: pad, y: h - pad - dd, nx: -1, ny: 0 };
 }
 
+function resizeCanvas(canvas) {
+  // OBS can momentarily report 0x0; keep it safe.
+  const rect = canvas.getBoundingClientRect();
+  const w = Math.max(1, Math.floor(rect.width));
+  const h = Math.max(1, Math.floor(rect.height));
+  const dpr = Math.max(1, Math.min(3, Math.floor(window.devicePixelRatio || 1)));
+
+  const pw = w * dpr;
+  const ph = h * dpr;
+
+  if (canvas.width !== pw || canvas.height !== ph) {
+    canvas.width = pw;
+    canvas.height = ph;
+  }
+
+  return { w, h, dpr };
+}
+
+function clamp(v, a, b) {
+  return Math.max(a, Math.min(b, v));
+}
+function clamp01(v) {
+  return Math.max(0, Math.min(1, v));
+}
+function clampInt(v, a, b) {
+  const n = (v == null) ? a : Math.round(+v || 0);
+  return Math.max(a, Math.min(b, n));
+}
+function lerp(a, b, t) {
+  return a + (b - a) * t;
+}
+function frac(x) {
+  return x - Math.floor(x);
+}
 function smoothstep01(x) {
   const t = clamp01(x);
   return t * t * (3 - 2 * t);
 }
 
-function num(v, fallback) {
-  const n = typeof v === 'string' ? Number(v) : v;
-  return (typeof n === 'number' && isFinite(n)) ? n : fallback;
-}
-function clamp01(x) { return clamp(x, 0, 1); }
-function clamp(x, a, b) { return Math.max(a, Math.min(b, Number.isFinite(+x) ? +x : a)); }
-function clampInt(x, a, b) { return Math.max(a, Math.min(b, (x | 0))); }
-function lerp(a, b, t) { return a + (b - a) * t; }
-function frac(x) { return x - Math.floor(x); }
-
-function normalizeHex(hex) {
-  if (typeof hex !== 'string') return '#78c8ff';
-  let h = hex.trim();
-  if (!h) return '#78c8ff';
-  if (h[0] !== '#') h = '#' + h;
-  if (h.length === 4) h = '#' + h[1] + h[1] + h[2] + h[2] + h[3] + h[3];
-  if (h.length !== 7) return '#78c8ff';
-  return h.toLowerCase();
+function normalizeHex(h) {
+  let s = String(h || '').trim();
+  if (!s) return '#ffffff';
+  if (s[0] !== '#') s = `#${s}`;
+  if (s.length === 4) {
+    const r = s[1], g = s[2], b = s[3];
+    s = `#${r}${r}${g}${g}${b}${b}`;
+  }
+  if (s.length !== 7) return '#ffffff';
+  return s.toLowerCase();
 }
 function hexToRgb(hex) {
-  const h = normalizeHex(hex).slice(1);
-  const n = parseInt(h, 16);
-  return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
+  const h = normalizeHex(hex);
+  const r = parseInt(h.slice(1, 3), 16) / 255;
+  const g = parseInt(h.slice(3, 5), 16) / 255;
+  const b = parseInt(h.slice(5, 7), 16) / 255;
+  return { r, g, b };
 }
 function rgbToHex(r, g, b) {
-  const rr = clamp(Math.round(r), 0, 255).toString(16).padStart(2, '0');
-  const gg = clamp(Math.round(g), 0, 255).toString(16).padStart(2, '0');
-  const bb = clamp(Math.round(b), 0, 255).toString(16).padStart(2, '0');
+  const rr = Math.max(0, Math.min(255, r | 0)).toString(16).padStart(2, '0');
+  const gg = Math.max(0, Math.min(255, g | 0)).toString(16).padStart(2, '0');
+  const bb = Math.max(0, Math.min(255, b | 0)).toString(16).padStart(2, '0');
   return `#${rr}${gg}${bb}`;
+}
+function hsvToRgb(h, s, v) {
+  // h,s,v: 0..1
+  const i = Math.floor(h * 6);
+  const f = h * 6 - i;
+  const p = v * (1 - s);
+  const q = v * (1 - f * s);
+  const t = v * (1 - (1 - f) * s);
+  switch (i % 6) {
+    case 0: return { r: v, g: t, b: p };
+    case 1: return { r: q, g: v, b: p };
+    case 2: return { r: p, g: v, b: t };
+    case 3: return { r: p, g: q, b: v };
+    case 4: return { r: t, g: p, b: v };
+    case 5: return { r: v, g: p, b: q };
+    default: return { r: v, g: t, b: p };
+  }
 }
