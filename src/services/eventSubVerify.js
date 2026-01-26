@@ -4,17 +4,15 @@
 const crypto = require('node:crypto');
 
 function getHeader(req, name) {
-  // Express lowercases headers in req.headers; allow case-insensitive lookup
   const key = String(name || '').toLowerCase();
-  return req?.headers?.[key] || req?.headers?.[name] || '';
+  return (req?.headers?.[key] ?? req?.headers?.[name] ?? '') || '';
 }
 
 function computeSignature({ secret, messageId, timestamp, rawBody }) {
-  // Twitch spec: HMAC_SHA256(secret, messageId + timestamp + rawBody)
   const hmac = crypto.createHmac('sha256', String(secret || ''));
   hmac.update(String(messageId || ''), 'utf8');
   hmac.update(String(timestamp || ''), 'utf8');
-  hmac.update(rawBody); // rawBody must be a Buffer
+  hmac.update(rawBody); // Buffer
   return `sha256=${hmac.digest('hex')}`;
 }
 
@@ -34,7 +32,6 @@ function verifyEventSub(req, rawBody, secret) {
   const timestamp = getHeader(req, 'Twitch-Eventsub-Message-Timestamp');
   const signature = getHeader(req, 'Twitch-Eventsub-Message-Signature');
 
-  // Defensive: rawBody should be Buffer from express.raw()
   const bodyBuf = Buffer.isBuffer(rawBody) ? rawBody : Buffer.from(rawBody || '');
 
   if (!messageId || !timestamp || !signature) {
