@@ -61,11 +61,13 @@ function mapDelta(eventCfg, normalized) {
 function eventSubRoutes({ env }) {
   const router = express.Router();
 
-  router.post('/twitch/eventsub', express.raw({ type: 'application/json' }), async (req, res) => {
+  router.post('/twitch/eventsub', express.raw({ type: '*/*', limit: '2mb' }), async (req, res) => {
+
     const secret = String(env.EVENTSUB_WEBHOOK_SECRET || '').trim();
     if (!secret) return res.status(500).type('text/plain').send('Missing EVENTSUB_WEBHOOK_SECRET');
 
-    const rawBody = Buffer.isBuffer(req.body) ? req.body : Buffer.from('');
+    const rawBody = Buffer.isBuffer(req.body) ? req.body : Buffer.from(req.body || '');
+
 
     const msgType = String(req.headers['twitch-eventsub-message-type'] || '');
     const msgIdHdr = String(req.headers['twitch-eventsub-message-id'] || '');
