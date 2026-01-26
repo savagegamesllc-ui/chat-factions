@@ -3,7 +3,7 @@
 
 const express = require('express');
 const { prisma } = require('../db/prisma');
-const { registerClient, unregisterClient, getClientCount } = require('../services/realtimeHub');
+const { registerClient, unregisterClient, getClientCount,broadcast } = require('../services/realtimeHub');
 
 function requireStreamer(req, res) {
   const streamerId = req.session?.streamerId;
@@ -24,6 +24,35 @@ function startSse(res) {
   if (typeof res.flushHeaders === 'function') res.flushHeaders();
   res.write(': connected\n\n');
 }
+  // --- DEBUG: fire an event into SSE (token-based). REMOVE after testing.
+  router.post('/overlay/:token/debug/broadcast', async (req, res) => {
+    const token = String(req.params.token || '').trim();
+    if (!token) return res.status(400).json({ error: 'Missing token' });
+
+    const streamer = await prisma.streamer.findUnique({
+      where: { overlayToken: token },
+      select: { id: true },
+    });
+
+    if (!streamer?.id) return res.status(404).json({ error: 'Invalid token' });
+
+    const streamerId = streamer.id;
+
+    const payload = {
+      debug: true,
+      msg: 'hello from debug broadcast',
+      ts: new Date().toISOString(),
+    };
+
+    broadcast(streamerId, 'meters', payload);
+
+    return res.json({
+      ok: true,
+      streamerId,
+      clients: getClientCount(streamerId),
+      sent: payload,
+    });
+  });
 
 function realtimeRoutes() {
   const router = express.Router();
