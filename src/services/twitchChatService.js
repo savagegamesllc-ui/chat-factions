@@ -29,7 +29,7 @@ function parseCommand(message, chatCfg) {
   const maxCmd = String(chatCfg?.commands?.maxhype?.name || '!maxhype').toLowerCase();
 
   const parts = text.split(/\s+/);
-  const cmd = parts[0].toLowerCase();
+  const cmd = (parts[0] || '').toLowerCase();
 
   // !hype ORDER 5
   if (cmd === hypeCmd) {
@@ -43,7 +43,7 @@ function parseCommand(message, chatCfg) {
   if (cmd === maxCmd) {
     const factionKey = (parts[1] || '').toUpperCase();
     if (!factionKey) return null;
-    // big visible spike
+    // big visible spike (note: still capped by maxDelta below)
     return { type: 'hype', factionKey, delta: 100 };
   }
 
@@ -94,7 +94,7 @@ async function startChatForStreamer(streamerId) {
       reconnect: true,
     },
     identity: {
-      username: streamer.login,      // ok for read; twitch allows this pattern
+      username: streamer.login, // This makes YOUR messages come in as self===true
       password: `oauth:${accessToken}`,
     },
     channels: [channelName],
@@ -109,17 +109,49 @@ async function startChatForStreamer(streamerId) {
     });
   });
 
+  client.on('disconnected', (reason) => {
+    console.log('[tmi disconnected]', {
+      streamerId: streamer.id,
+      reason: String(reason || ''),
+    });
+  });
+
   client.on('message', async (channel, tags, message, self) => {
-    if (self) return;
+    const text = String(message || '').trim();
+
+    // Only log command-like messages to keep noise low
+    const isCmd = text.startsWith('!');
+    if (isCmd) {
+      console.log('[tmi msg]', {
+        streamerId: streamer.id,
+        channel,
+        user: tags?.username,
+        display: tags?.['display-name'],
+        self,
+        text,
+      });
+    }
+
+    // ✅ IMPORTANT CHANGE:
+    // We no longer drop self messages, because you are connected as the streamer account.
+    // If later you swap to a separate bot account, this still works fine.
+    // if (self) return;
 
     try {
       const chatCfg = await getEffectiveChatConfig(streamer.id);
-      const parsed = parseCommand(message, chatCfg);
-      if (!parsed) return;
+      const parsed = parseCommand(text, chatCfg);
+
+      if (!parsed) {
+        if (isCmd) console.log('[cmd] not recognized', { streamerId: streamer.id, self, text });
+        return;
+      }
 
       // Cap per command
       let deltaRaw = Number(parsed.delta || 0);
-      if (!Number.isFinite(deltaRaw) || deltaRaw === 0) return;
+      if (!Number.isFinite(deltaRaw) || deltaRaw === 0) {
+        console.log('[cmd] delta invalid/zero', { streamerId: streamer.id, parsed, text });
+        return;
+      }
 
       let capped = Math.trunc(deltaRaw);
 
@@ -127,23 +159,56 @@ async function startChatForStreamer(streamerId) {
       const lim = Number.isFinite(maxD) ? Math.max(1, Math.abs(Math.trunc(maxD))) : 25;
       capped = Math.max(-lim, Math.min(lim, capped));
 
+      console.log('[cmd] parsed', {
+        streamerId: streamer.id,
+        parsed,
+        deltaRaw,
+        capped,
+        lim,
+        maxD,
+      });
+
       // cooldown
       const session = await getOrCreateActiveSession(streamer.id);
       const userKey = getUserKey(tags);
 
       const overrideMinutes = chatCfg?.cooldownMinutes?.hype;
       const allowed = await checkAndTouchCooldown(session.id, 'hype', userKey, overrideMinutes);
+
+      console.log('[cmd] cooldown', {
+        streamerId: streamer.id,
+        allowed,
+        userKey,
+        overrideMinutes: overrideMinutes ?? null,
+        sessionId: session?.id,
+      });
+
       if (!allowed) return;
 
       // apply
       await addHype(streamer.id, parsed.factionKey, capped, 'chat', {
         user: tags?.username || null,
         displayName: tags?.['display-name'] || null,
-        raw: String(message || ''),
+        raw: text,
+        self: !!self,
+      });
+
+      console.log('[cmd] hype applied', {
+        streamerId: streamer.id,
+        factionKey: parsed.factionKey,
+        capped,
       });
 
       // broadcast updated snapshot
       const snap = await getMetersSnapshot(streamer.id);
+
+      console.log('[cmd] broadcasting meters', {
+        streamerId: streamer.id,
+        factionKey: parsed.factionKey,
+        capped,
+        snapKeys: snap ? Object.keys(snap) : null,
+      });
+
       broadcast(streamer.id, 'meters', snap);
     } catch (e) {
       console.error('[twitchChatService] message handler error:', e?.message || e);
