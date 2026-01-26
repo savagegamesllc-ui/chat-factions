@@ -76,6 +76,8 @@ app.use(
  * so the webhook route can read the raw body and verify signatures.
  */
 app.use(webhookRoutes);
+// IMPORTANT: EventSub requires raw body for signature verification.
+// This route MUST be mounted before express.json()
 app.use(eventSubRoutes({ env: process.env }));
 // Parsers (normal routes)
 app.use(express.urlencoded({ extended: false }));

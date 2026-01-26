@@ -60,17 +60,14 @@ function mapDelta(eventCfg, normalized) {
 function eventSubRoutes({ env }) {
   const router = express.Router();
 
-  // IMPORTANT: accept ALL content-types so Twitch CLI verify-subscription works
+  // IMPORTANT: EventSub must receive RAW body for signature verification.
   router.post(
     '/twitch/eventsub',
     express.raw({ type: '*/*', limit: '2mb' }),
     async (req, res) => {
       const secret = String(env.EVENTSUB_WEBHOOK_SECRET || '').trim();
-      if (!secret) {
-        return res.status(500).type('text/plain').send('Missing EVENTSUB_WEBHOOK_SECRET');
-      }
+      if (!secret) return res.status(500).type('text/plain').send('Missing EVENTSUB_WEBHOOK_SECRET');
 
-      // GUARANTEE raw body (prevents crashes + bad signatures)
       if (!Buffer.isBuffer(req.body)) {
         console.warn('[eventsub] non-raw body', {
           bodyType: typeof req.body,
@@ -92,9 +89,7 @@ function eventSubRoutes({ env }) {
       });
 
       const v = verifyEventSub(req, rawBody, secret);
-      if (!v.ok) {
-        return res.status(403).type('text/plain').send(v.reason || 'Invalid signature');
-      }
+      if (!v.ok) return res.status(403).type('text/plain').send(v.reason || 'Invalid signature');
 
       let payload;
       try {
@@ -108,12 +103,8 @@ function eventSubRoutes({ env }) {
       // 1) Verification handshake
       if (msgType === 'webhook_callback_verification') {
         const challenge = payload?.challenge;
-        if (!challenge) {
-          return res.status(400).type('text/plain').send('Missing challenge');
-        }
-        console.log('[eventsub] verification ok', {
-          id: msgId ? msgId.slice(0, 12) : '',
-        });
+        if (!challenge) return res.status(400).type('text/plain').send('Missing challenge');
+        console.log('[eventsub] verification ok', { id: msgId ? msgId.slice(0, 12) : '' });
         return res.status(200).type('text/plain').send(String(challenge));
       }
 
@@ -128,18 +119,7 @@ function eventSubRoutes({ env }) {
       }
 
       // 3) Notification
-      if (msgType !== 'notification') {
-        return res.sendStatus(204);
-      }
-
-      // Idempotency
-      if (msgId) {
-        const seen = await prisma.externalEventReceipt.findUnique({
-          where: { receiptKey: `eventsub:${msgId}` },
-          select: { receiptKey: true },
-        });
-        if (seen) return res.sendStatus(204);
-      }
+      if (msgType !== 'notification') return res.sendStatus(204);
 
       const subType = payload?.subscription?.type;
       const ev = payload?.event || {};
@@ -158,6 +138,21 @@ function eventSubRoutes({ env }) {
 
       if (!streamer) return res.sendStatus(204);
 
+      // ✅ Idempotency (FIXED): use existing compound unique streamerId_eventId
+      if (msgId) {
+        const seen = await prisma.externalEventReceipt.findUnique({
+          where: {
+            streamerId_eventId: {
+              streamerId: streamer.id,
+              eventId: msgId,
+            },
+          },
+          select: { id: true },
+        });
+
+        if (seen) return res.sendStatus(204);
+      }
+
       const eventCfg = await getEffectiveEventConfig(streamer.id);
       if (eventCfg.enabled === false) return res.sendStatus(204);
 
@@ -175,17 +170,19 @@ function eventSubRoutes({ env }) {
       const delta = mapDelta(eventCfg, normalized);
       if (!factionKey || delta <= 0) return res.sendStatus(204);
 
-      // Record receipt
+      // ✅ Record receipt (FIXED): store msgId into eventId
       if (msgId) {
         try {
           await prisma.externalEventReceipt.create({
             data: {
               streamerId: streamer.id,
-              receiptKey: `eventsub:${msgId}`,
+              eventId: msgId,
               payload,
             },
           });
-        } catch (_) {}
+        } catch (_) {
+          // ignore unique race
+        }
       }
 
       try {
