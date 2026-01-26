@@ -76,7 +76,7 @@ app.use(
  * so the webhook route can read the raw body and verify signatures.
  */
 app.use(webhookRoutes);
-
+app.use(eventSubRoutes({ env: process.env }));
 // Parsers (normal routes)
 app.use(express.urlencoded({ extended: false }));
 app.use(express.json());
@@ -136,7 +136,7 @@ app.use(chatConfigRoutes);
 app.use(eventKeyRoutes);
 app.use(eventApiPageRoutes);
 app.use(ownerStreamersRoutes);
-app.use(eventSubRoutes({ env: process.env }));
+
 
 // 404
 app.use((req, res) => {
