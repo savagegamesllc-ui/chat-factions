@@ -1,297 +1,286 @@
 // public/overlays/audio/stemPack.js
-// StemPack: simple WebAudio stem loader + hype-driven stem gating
-//
-// Contract:
-//   const pack = await createStemPack({ packId, baseUrl?, options? })
-//   await pack.start()   // safe to call multiple times
-//   pack.setHype(h01)    // 0..1
-//   pack.destroy()
-//
-// Naming convention:
-//   <PACKID>001.wav .. <PACKID>005.wav
-// Example:
-//   EDMGAMEON001.wav .. EDMGAMEON005.wav
-//
-// Design:
-// - All stems start together (perfect sync), muted by gain=0
-// - setHype(h) opens/closes stems dynamically with fades
-//
-// Notes:
-// - Uses decodeAudioData; WAV recommended
-// - OBS Browser Source usually allows autoplay, but we attempt resume() on updates
+// StemPack: PRO audio engine for reactive overlays
+// - Loads up to N stems named: <PACK><001..N>.<ext>
+// - Ext selection:
+//    * options.fileExt: 'wav' (legacy; forces one ext)
+//    * options.fileExts: ['ogg','mp3','wav'] (preferred; tries in order)
+//    * default: ['ogg','mp3','wav']
+// - API: createStemPack({ packId, baseUrl, options }) -> { start, setHype, setMasterVolume, destroy }
 
 'use strict';
 
-function clamp(n, a, b) {
-  n = Number(n);
-  if (!Number.isFinite(n)) n = a;
-  return Math.max(a, Math.min(b, n));
+function clamp(n, a, b) { n = +n; return Number.isFinite(n) ? Math.max(a, Math.min(b, n)) : a; }
+function clamp01(n) { return clamp(n, 0, 1); }
+function pad3(n) { return String(n).padStart(3, '0'); }
+
+function normalizeBaseUrl(u) {
+  const s = String(u || '').trim();
+  if (!s) return '/public/overlays/audio';
+  return s.endsWith('/') ? s.slice(0, -1) : s;
 }
 
-function pad3(n) {
-  const s = String(n | 0);
-  return s.length === 1 ? `00${s}` : (s.length === 2 ? `0${s}` : s);
+function getAudioContext() {
+  // Reuse one AudioContext across packs; OBS/Chromium behaves better.
+  if (window.__CF_AUDIO_CTX && window.__CF_AUDIO_CTX.state !== 'closed') return window.__CF_AUDIO_CTX;
+  const Ctor = window.AudioContext || window.webkitAudioContext;
+  if (!Ctor) throw new Error('WebAudio not supported');
+  const ctx = new Ctor();
+  window.__CF_AUDIO_CTX = ctx;
+  return ctx;
 }
 
-function nowSec(ctx) {
-  return (ctx && ctx.currentTime) ? ctx.currentTime : 0;
+async function resumeCtx(ctx) {
+  if (!ctx) return;
+  if (ctx.state === 'suspended') {
+    try { await ctx.resume(); } catch {}
+  }
 }
 
-async function fetchArrayBuffer(url, signal) {
-  const res = await fetch(url, { cache: 'no-store', signal });
-  if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
-  return await res.arrayBuffer();
-}
-
-async function decodeBuffer(ctx, arrayBuffer) {
-  // Safari sometimes needs a copy
-  const ab = arrayBuffer.slice ? arrayBuffer.slice(0) : arrayBuffer;
-  return await ctx.decodeAudioData(ab);
-}
-
-function scheduleGainRamp(gainNode, target, fadeSec) {
-  const g = gainNode.gain;
-  const t0 = nowSec(gainNode.context);
-
-  // Cancel scheduled values and start from current
-  try { g.cancelScheduledValues(t0); } catch {}
-
-  // Preserve continuity: set starting point from current value
-  const current = clamp(g.value, 0, 1);
-  try { g.setValueAtTime(current, t0); } catch {}
-
-  const dur = clamp(fadeSec, 0.01, 4);
-  // Use linear ramp (predictable)
-  try { g.linearRampToValueAtTime(clamp(target, 0, 1), t0 + dur); } catch {}
-}
-
-function defaultThresholds(count) {
-  // 1 always on; others unlock as hype rises
-  // For up to 5 stems
-  const base = [0.0, 0.20, 0.40, 0.65, 0.85];
-  const out = [];
-  for (let i = 0; i < count; i++) out.push(base[i] ?? (0.85 + i * 0.03));
-  return out;
-}
-
-/**
- * createStemPack({ packId, baseUrl, options })
- *
- * options:
- * - maxStems (default 5)
- * - masterVolume (default 0.7)
- * - fadeInMs (default 350)
- * - fadeOutMs (default 600)
- * - thresholds (array of 0..1, length >= stems)
- * - fileExt (default 'wav')
- * - loop (default true)
- * - stopAtFirstMissing (default true)
- * - debug (default false)
- */
-export async function createStemPack({
-  packId,
-  baseUrl = '/public/overlays/audio',
-  options = {},
-} = {}) {
-  const pid = String(packId || '').trim();
-  if (!pid) throw new Error('createStemPack: packId required');
-
-  const opt = {
-    maxStems: clamp(options.maxStems ?? 5, 1, 5),
-    masterVolume: clamp(options.masterVolume ?? 0.7, 0, 1),
-    fadeInMs: clamp(options.fadeInMs ?? 350, 30, 4000),
-    fadeOutMs: clamp(options.fadeOutMs ?? 600, 30, 6000),
-    thresholds: Array.isArray(options.thresholds) ? options.thresholds.slice(0) : null,
-    fileExt: String(options.fileExt || 'wav').replace('.', ''),
-    loop: options.loop !== false,
-    stopAtFirstMissing: options.stopAtFirstMissing !== false,
-    debug: !!options.debug,
-  };
-
-  // AudioContext: create lazily (but we need it for decode)
-  const AudioCtx = window.AudioContext || window.webkitAudioContext;
-  if (!AudioCtx) throw new Error('WebAudio not supported in this browser context');
-
-  const ctx = new AudioCtx();
-
-  
-  // Routing: stems -> stemGain -> master -> destination
-  const master = ctx.createGain();
-  master.gain.value = opt.masterVolume;
-  master.connect(ctx.destination);
-
-  // Abort controller for fetches
-  const ac = new AbortController();
-
-  // Discover and load stems
-  const stems = []; // { index, url, buffer, gain, source }
-  let discovered = 0;
-
-  for (let i = 1; i <= opt.maxStems; i++) {
-    const idx = pad3(i);
-    const url = `${baseUrl}/${encodeURIComponent(pid)}${idx}.${opt.fileExt}`;
-
+async function decode(ctx, arrayBuffer) {
+  // decodeAudioData has callback + promise variants across Chromium builds
+  return await new Promise((resolve, reject) => {
     try {
-      const ab = await fetchArrayBuffer(url, ac.signal);
-      const buf = await decodeBuffer(ctx, ab);
-
-      const gain = ctx.createGain();
-      gain.gain.value = (i === 1) ? 1 : 0; // 001 always audible, others muted initially
-      gain.connect(master);
-
-      stems.push({
-        i,
-        idx,
-        url,
-        buffer: buf,
-        gain,
-        source: null,
-        playing: false,
-        targetOn: (i === 1),
-      });
-
-      discovered++;
+      const p = ctx.decodeAudioData(
+        arrayBuffer.slice(0),
+        (buf) => resolve(buf),
+        (err) => reject(err || new Error('decodeAudioData failed'))
+      );
+      if (p && typeof p.then === 'function') p.then(resolve, reject);
     } catch (e) {
-      if (opt.debug) console.warn('[StemPack] missing or failed stem:', url, e);
-      if (opt.stopAtFirstMissing) break;
-      // else keep trying later indexes
+      reject(e);
     }
+  });
+}
+
+async function tryFetchBuffer({ ctx, url, signal, debug }) {
+  const res = await fetch(url, { cache: 'force-cache', signal });
+  if (!res.ok) {
+    if (debug) console.warn('[StemPack] fetch failed', res.status, url);
+    throw new Error(`fetch ${res.status}: ${url}`);
+  }
+  const ab = await res.arrayBuffer();
+  return await decode(ctx, ab);
+}
+
+function extCandidatesFromOptions(options) {
+  // Legacy support
+  const one = String(options?.fileExt || '').trim();
+  if (one) return [one.toLowerCase()];
+
+  // Preferred new option
+  const many = options?.fileExts;
+  if (Array.isArray(many) && many.length) {
+    return many.map((x) => String(x).trim().toLowerCase()).filter(Boolean);
   }
 
-  if (!stems.length) {
-    // Clean up ctx
-    try { await ctx.close(); } catch {}
-    throw new Error(`createStemPack: no stems found for packId=${pid}`);
-  }
+  // Default order
+  return ['ogg', 'mp3', 'wav'];
+}
 
-  const thresholds = opt.thresholds && opt.thresholds.length
-    ? opt.thresholds.map((x) => clamp(x, 0, 1))
-    : defaultThresholds(stems.length);
+function defaultThresholds(maxStems) {
+  // 1 always on; higher stems fade in as hype increases.
+  // Keep these conservative so it feels “earned”.
+  if (maxStems <= 1) return [0.0];
+  if (maxStems === 2) return [0.0, 0.35];
+  if (maxStems === 3) return [0.0, 0.25, 0.55];
+  if (maxStems === 4) return [0.0, 0.20, 0.45, 0.70];
+  return [0.0, 0.20, 0.40, 0.65, 0.85];
+}
 
-  let started = false;
+export async function createStemPack({ packId, baseUrl, options } = {}) {
+  const id = String(packId || '').trim();
+  if (!id) throw new Error('createStemPack requires packId');
+
+  const opts = options || {};
+  const maxStems = Math.max(1, Math.min(5, (opts.maxStems ?? 5) | 0));
+  const base = normalizeBaseUrl(baseUrl);
+
+  const thresholds = Array.isArray(opts.thresholds) && opts.thresholds.length
+    ? opts.thresholds.map((x) => clamp01(x))
+    : defaultThresholds(maxStems);
+
+  const fadeInMs = clamp(opts.fadeInMs ?? 350, 30, 4000);
+  const fadeOutMs = clamp(opts.fadeOutMs ?? 600, 30, 6000);
+  const loop = opts.loop !== false; // default true
+  const masterVolume = clamp(opts.masterVolume ?? 0.7, 0, 1);
+  const stopAtFirstMissing = opts.stopAtFirstMissing !== false; // default true
+  const debug = !!opts.debug;
+
+  const exts = extCandidatesFromOptions(opts);
+  if (debug) console.log('[StemPack] ext candidates:', exts);
+
+  const ctx = getAudioContext();
+  const masterGain = ctx.createGain();
+  masterGain.gain.value = masterVolume;
+  masterGain.connect(ctx.destination);
+
+  // Per-stem
+  const stemGains = [];
+  const buffers = [];
+  const sources = [];
+  let startedAt = 0;
   let destroyed = false;
 
-  // We keep a “last set” to avoid rescheduling ramps every time if nothing changed
-  let lastOnMask = -1;
+  let hype = 0;
 
-  function computeOnMask(h01) {
-    const h = clamp(h01, 0, 1);
-    let mask = 0;
-    for (let s = 0; s < stems.length; s++) {
-      const th = thresholds[s] ?? 0;
-      const on = (s === 0) ? true : (h >= th); // stem1 always on
-      if (on) mask |= (1 << s);
-    }
-    return mask;
+  const abort = new AbortController();
+
+  function makeUrl(stemIndex1Based, ext) {
+    const filename = `${id}${pad3(stemIndex1Based)}.${ext}`;
+    return `${base}/${filename}`;
   }
 
-  async function ensureRunning() {
-    if (destroyed) return;
-    // resume if suspended (autoplay policies)
-    if (ctx.state === 'suspended') {
-      try { await ctx.resume(); } catch {}
+  async function loadOneStem(i1) {
+    // Try each extension until one decodes successfully.
+    let lastErr = null;
+    for (const ext of exts) {
+      const url = makeUrl(i1, ext);
+      try {
+        const buf = await tryFetchBuffer({ ctx, url, signal: abort.signal, debug });
+        if (debug) console.log('[StemPack] loaded', url, buf?.duration);
+        return buf;
+      } catch (e) {
+        lastErr = e;
+      }
+    }
+    throw lastErr || new Error(`Unable to load stem ${i1}`);
+  }
+
+  async function loadAll() {
+    // Load sequentially if stopAtFirstMissing, else parallel best-effort.
+    if (stopAtFirstMissing) {
+      for (let i = 1; i <= maxStems; i++) {
+        buffers[i - 1] = await loadOneStem(i);
+      }
+      return;
+    }
+
+    // Best-effort parallel
+    const ps = [];
+    for (let i = 1; i <= maxStems; i++) {
+      ps.push(
+        loadOneStem(i)
+          .then((buf) => { buffers[i - 1] = buf; })
+          .catch((e) => {
+            buffers[i - 1] = null;
+            if (debug) console.warn('[StemPack] stem missing', i, e);
+          })
+      );
+    }
+    await Promise.all(ps);
+
+    // At least stem 1 must exist to be usable
+    if (!buffers[0]) throw new Error('Stem 001 missing; cannot start pack');
+  }
+
+  function buildGraph() {
+    for (let i = 0; i < maxStems; i++) {
+      const g = ctx.createGain();
+      g.gain.value = 0; // we’ll ramp based on hype
+      g.connect(masterGain);
+      stemGains[i] = g;
     }
   }
 
-  function startSourcesAligned() {
-    const t0 = nowSec(ctx) + 0.05; // tiny lead time
-    for (const s of stems) {
+  function desiredGainForStem(i /*0-based*/, h01) {
+    // Stem 0 always on (but still affected by master volume)
+    if (i === 0) return 1;
+
+    const t = thresholds[i] ?? clamp01(i / Math.max(1, (maxStems - 1)));
+    // smooth-ish ramp around threshold (avoid “hard steps”)
+    const w = 0.12; // width of transition band
+    const x = (h01 - (t - w)) / (2 * w);
+    const s = clamp01(x);
+    // cubic smoothstep
+    return s * s * (3 - 2 * s);
+  }
+
+  function rampGain(gainNode, target, ms) {
+    const now = ctx.currentTime;
+    const t = now + Math.max(0.001, ms / 1000);
+    try {
+      gainNode.gain.cancelScheduledValues(now);
+      gainNode.gain.setValueAtTime(gainNode.gain.value, now);
+      gainNode.gain.linearRampToValueAtTime(target, t);
+    } catch {}
+  }
+
+  function applyHype(h01) {
+    const h = clamp01(h01);
+    hype = h;
+
+    for (let i = 0; i < stemGains.length; i++) {
+      const g = stemGains[i];
+      const desired = desiredGainForStem(i, h);
+
+      // Decide fade direction for timing
+      const current = g.gain.value;
+      const isUp = desired >= current;
+      rampGain(g, desired, isUp ? fadeInMs : fadeOutMs);
+    }
+  }
+
+  function startSources() {
+    // Start all stems at the same time for tight sync
+    startedAt = ctx.currentTime + 0.05;
+
+    for (let i = 0; i < maxStems; i++) {
+      const buf = buffers[i];
+      if (!buf) continue;
+
       const src = ctx.createBufferSource();
-      src.buffer = s.buffer;
-      src.loop = !!opt.loop;
-      src.connect(s.gain);
-      src.start(t0);
-      s.source = src;
-      s.playing = true;
+      src.buffer = buf;
+      src.loop = !!loop;
+      src.connect(stemGains[i]);
+
+      src.start(startedAt);
+      sources[i] = src;
     }
+
+    applyHype(hype);
   }
 
   async function start() {
     if (destroyed) return;
-    if (started) {
-      await ensureRunning();
-      return;
-    }
-    started = true;
-    await ensureRunning();
-    startSourcesAligned();
-  }
+    await resumeCtx(ctx);
 
-  function setMasterVolume(v) {
-    master.gain.value = clamp(v, 0, 1);
+    // Build gains before loading so we can “warm” structure.
+    if (!stemGains.length) buildGraph();
+
+    // Load + decode
+    await loadAll();
+
+    // Start playback
+    startSources();
   }
 
   function setHype(h01) {
     if (destroyed) return;
+    applyHype(h01);
+  }
 
-    // Attempt to resume on any meter activity
-    // (works for OBS most of the time; harmless otherwise)
-    void ensureRunning();
-
-    const mask = computeOnMask(h01);
-    if (mask === lastOnMask) return;
-    lastOnMask = mask;
-
-    const fadeInSec = opt.fadeInMs / 1000;
-    const fadeOutSec = opt.fadeOutMs / 1000;
-
-    for (let idx = 0; idx < stems.length; idx++) {
-      const s = stems[idx];
-      const shouldBeOn = (mask & (1 << idx)) !== 0;
-
-      // 001 always on; ignore “off”
-      if (idx === 0) {
-        if (!started) {
-          // If not started yet, keep gain at 1 for stem 1
-          s.gain.gain.value = 1;
-        } else {
-          // Keep at 1 (no ramp needed)
-          // But if someone lowered it, restore smoothly
-          if (s.gain.gain.value < 0.98) scheduleGainRamp(s.gain, 1, 0.15);
-        }
-        continue;
-      }
-
-      // For other stems, ramp to target
-      const target = shouldBeOn ? 1 : 0;
-      const dur = shouldBeOn ? fadeInSec : fadeOutSec;
-      scheduleGainRamp(s.gain, target, dur);
-      s.targetOn = shouldBeOn;
-    }
+  function setMasterVolume(v) {
+    if (destroyed) return;
+    masterGain.gain.value = clamp(v, 0, 1);
   }
 
   function destroy() {
+    if (destroyed) return;
     destroyed = true;
-    ac.abort();
+    try { abort.abort(); } catch {}
 
-    // Fade master down quickly to avoid clicks
-    try {
-      scheduleGainRamp(master, 0, 0.08);
-    } catch {}
-
-    // Stop sources
-    for (const s of stems) {
-      try { s.source && s.source.stop(0); } catch {}
-      try { s.source && s.source.disconnect(); } catch {}
-      try { s.gain && s.gain.disconnect(); } catch {}
-      s.source = null;
-      s.playing = false;
+    for (const src of sources) {
+      try { src?.stop?.(); } catch {}
+      try { src?.disconnect?.(); } catch {}
     }
-
-    try { master.disconnect(); } catch {}
-
-    try { ctx.close(); } catch {}
+    for (const g of stemGains) {
+      try { g?.disconnect?.(); } catch {}
+    }
+    try { masterGain.disconnect(); } catch {}
   }
 
-  // Start is manual (caller decides when to begin),
-  // but we’ll typically start on first meter update.
-  return {
-    packId: pid,
-    stemsFound: stems.map((s) => s.url),
-    thresholds,
-    start,
-    setHype,
-    setMasterVolume,
-    destroy,
-  };
+  // Back-compat: some older overlay code may call stop()
+  function stop() { destroy(); }
+
+  return { start, setHype, setMasterVolume, destroy, stop };
 }
