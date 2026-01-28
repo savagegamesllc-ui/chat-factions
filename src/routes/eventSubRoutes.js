@@ -177,7 +177,6 @@ function eventSubRoutes({ env }) {
             data: {
               streamerId: streamer.id,
               eventId: msgId,
-              payload,
             },
           });
         } catch (_) {
