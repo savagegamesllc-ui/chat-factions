@@ -6,10 +6,112 @@
     <link rel="stylesheet" href="/public/css/app.css" />
   </head>
   <body>
-    <h1>Streamer Overlay System</h1>
-    <ul>
-      <li><a href="/owner/login">Owner Login</a></li>
-      <li><a href="/admin">Streamer Dashboard (requires login)</a></li>
-    </ul>
+    <div class="container">
+
+      <!-- Hero -->
+      <div class="card" style="margin-top: 28px;">
+        <div class="brand">
+          <div class="brand-dot"></div>
+          <div>
+            <h1>Chat Factions</h1>
+            <div class="sub">
+              Reactive Twitch overlays powered by live hype, factions, and events
+            </div>
+          </div>
+        </div>
+
+        <div class="hr"></div>
+
+        <p class="muted">
+          Chat Factions turns your Twitch chat into a living system.
+          Bits, subs, redeems, and events fuel real-time overlays that react,
+          escalate, and visually reward hype — without wrecking OBS performance.
+        </p>
+
+        <div style="margin-top: 14px; display:flex; gap:12px; flex-wrap:wrap;">
+          <a class="btn primary" href="/admin">Streamer Dashboard</a>
+          <span class="badge free">FREE to start</span>
+          <span class="badge pro">PRO overlays available</span>
+        </div>
+      </div>
+
+      <!-- Feature grid -->
+      <div class="grid two" style="margin-top: 18px;">
+
+        <div class="card">
+          <div class="card-title">
+            <h2>What you get</h2>
+          </div>
+          <ul class="muted small" style="margin: 10px 0 0 18px;">
+            <li>Live SSE-driven overlays (no polling spam)</li>
+            <li>Faction-based hype meters</li>
+            <li>OBS-safe, performance-capped visuals</li>
+            <li>Automatic Twitch EventSub integration</li>
+            <li>Audio-reactive & visual escalation (PRO)</li>
+          </ul>
+        </div>
+
+        <div class="card">
+          <div class="card-title">
+            <h2>Built for streamers</h2>
+          </div>
+          <ul class="muted small" style="margin: 10px 0 0 18px;">
+            <li>One browser source — that’s it</li>
+            <li>No plugins, no local installs</li>
+            <li>Owner-managed layouts & presets</li>
+            <li>Tier-gated overlays (FREE → PRO)</li>
+            <li>Designed to scale with hype</li>
+          </ul>
+        </div>
+
+      </div>
+
+      <!-- Pricing -->
+      <div class="card" style="margin-top: 18px;">
+        <div class="card-title">
+          <h2>Plans</h2>
+          <span class="hint">Upgrade anytime</span>
+        </div>
+
+        <div class="grid two" style="margin-top: 12px;">
+
+          <div class="card">
+            <span class="badge free">FREE</span>
+            <h2 style="margin-top: 8px;">Starter overlays</h2>
+            <p class="muted small">
+              Perfect for getting started or lightweight streams.
+            </p>
+            <ul class="muted small" style="margin-left: 18px;">
+              <li>Core hype & faction system</li>
+              <li>Selected free overlays</li>
+              <li>Basic configuration</li>
+            </ul>
+          </div>
+
+          <div class="card">
+            <span class="badge pro">PRO</span>
+            <h2 style="margin-top: 8px;">High-impact overlays</h2>
+            <p class="muted small">
+              Designed for moments that need to feel big.
+            </p>
+            <ul class="muted small" style="margin-left: 18px;">
+              <li>Advanced visual effects</li>
+              <li>Audio stem integration</li>
+              <li>Expanded controls & tuning</li>
+              <li>Priority future overlays</li>
+            </ul>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- Footer -->
+      <div style="margin-top: 32px; text-align:center;">
+        <a href="/owner/login" class="muted small">
+          Owner Login
+        </a>
+      </div>
+
+    </div>
   </body>
 </html>
