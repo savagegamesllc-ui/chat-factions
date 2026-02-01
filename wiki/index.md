@@ -8,13 +8,13 @@ This wiki has two goals:
 
 ## Start here
 - [Basics: Using the Dashboard UI](wiki/basics/ui)
-- [Basics: Adding the Overlay to OBS](basics/obs.md)
-- [Basics: Hype & Factions](basics/hype.md)
+- [Basics: Adding the Overlay to OBS](wiki/basics/obs)
+- [Basics: Hype & Factions](wiki/basics/hype)
 
 ## Guides
-- [Overlays (Hub)](basics/overlays/overlays.md)
-- [Chat Commands](commands/commands.md)
-- [PRO vs FREE](pro-vs-free.md)
-- [Troubleshooting](troubleshooting/troubleshooting.md)
+- [Overlays (Hub)](wiki/basics/overlays/overlays.md)
+- [Chat Commands](wiki/commands/commands.md)
+- [PRO vs FREE](wiki/pro-vs-free.md)
+- [Troubleshooting](wiki/troubleshooting/troubleshooting.md)
 
 > Tip: Click **Wiki (?)** in the dashboard to open this documentation without leaving the page.
