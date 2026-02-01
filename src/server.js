@@ -121,6 +121,7 @@ app.get('/', (req, res) => {
 });
 
 // Mount routes (contracts stay stable)
+app.use(wikiRoutes);
 app.use(authRoutes);
 app.use(dashboardRoutes);
 app.use(ownerRoutes);
@@ -147,7 +148,7 @@ app.use((req, res) => {
 
 // Error handler
 app.use(errorHandler);
-app.use(wikiRoutes);
+
 app.listen(config.port, () => {
   console.log(`[server] listening on ${config.appBaseUrl}`);
 
