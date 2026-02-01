@@ -15,7 +15,7 @@
     <a href="/admin/meters" class="<%= activeTab === 'meters' ? 'active' : '' %>">Meters</a>
     <a href="/admin/billing" class="<%= activeTab === 'billing' ? 'active' : '' %>">Billing</a>
     <a href="/admin/chat" class="<%= activeTab === 'chat' ? 'active' : '' %>">Chat</a>
-    <a href="/admin/event-Api" class="<%= activeTab === 'eventApi' ? 'active' : '' %>">Event API</a>
+    <a href="/admin/event-api" class="<%= activeTab === 'eventApi' ? 'active' : '' %>">Event API</a>
 
     <!-- Wiki: new tab -->
     <a
@@ -37,29 +37,28 @@
   </div>
 </div>
 
-<!-- Slide-out Wiki Drawer (available on every page that includes this header) -->
+<!-- Slide-out Wiki Drawer -->
+<div class="wiki-backdrop" id="wikiBackdrop" data-wiki-close></div>
+
 <div class="wiki-drawer" id="wikiDrawer" aria-hidden="true">
-  <div class="wiki-drawer__backdrop" data-wiki-close></div>
+  <div class="wiki-drawer-header">
+    <div class="wiki-drawer-title">Wiki</div>
 
-  <div class="wiki-drawer__panel" role="dialog" aria-label="Wiki">
-    <div class="wiki-drawer__topbar">
-      <div class="wiki-drawer__title">Wiki</div>
-
-      <div class="wiki-drawer__actions">
-        <a class="btn" href="/wiki" target="_blank" rel="noopener noreferrer">Open full</a>
-        <button type="button" class="btn" data-wiki-close>Close</button>
-      </div>
+    <div style="display:flex; gap:8px; align-items:center;">
+      <a class="btn" href="/wiki" target="_blank" rel="noopener noreferrer">Open full</a>
+      <button type="button" class="btn" data-wiki-close>Close</button>
     </div>
-
-    <iframe
-      class="wiki-drawer__frame"
-      src="/wiki"
-      title="Chat Factions Wiki"
-      loading="lazy"
-      referrerpolicy="no-referrer"
-    ></iframe>
   </div>
+
+  <iframe
+    class="wiki-drawer-frame"
+    id="wikiDrawerFrame"
+    src="/wiki"
+    title="Chat Factions Wiki"
+    loading="lazy"
+    referrerpolicy="no-referrer"
+  ></iframe>
 </div>
 
-<!-- No inline script (CSP-safe). Load a small JS helper instead. -->
+<!-- CSP-safe: external JS only -->
 <script src="/public/js/wikiDrawer.js" defer></script>
