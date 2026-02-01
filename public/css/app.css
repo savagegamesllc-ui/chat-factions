@@ -316,59 +316,91 @@ pre.code {
 }
 
 /* ---- Wiki Drawer ---- */
-.wiki-drawer {
-  position: fixed;
-  top: 0;
-  right: 0;
-  height: 100vh;
-  width: min(520px, 92vw);
-  background: linear-gradient(180deg, rgba(15,15,30,0.98), rgba(8,8,16,0.98));
-  border-left: 1px solid rgba(255,255,255,0.12);
-  box-shadow: -20px 0 40px rgba(0,0,0,0.45);
-  transform: translateX(102%);
-  transition: transform 220ms ease;
-  z-index: 1000000;
+/* ------------------------------
+   Wiki Layout
+-------------------------------- */
+
+.wiki-layout {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  gap: 24px;
+  margin-top: 16px;
+}
+
+.wiki-sidebar {
+  position: sticky;
+  top: 16px;
+  align-self: start;
+  height: fit-content;
+}
+
+.wiki-nav {
   display: flex;
   flex-direction: column;
+  gap: 8px;
 }
 
-.wiki-drawer.open {
-  transform: translateX(0);
+.wiki-nav a {
+  padding: 8px 12px;
+  border-radius: 10px;
+  color: rgba(255,255,255,0.85);
+  text-decoration: none;
 }
 
-.wiki-drawer-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 12px 12px;
-  border-bottom: 1px solid rgba(255,255,255,0.10);
+.wiki-nav a:hover {
+  background: rgba(255,255,255,0.08);
 }
 
-.wiki-drawer-title {
-  font-weight: 800;
-  font-size: 13px;
-  color: rgba(255,255,255,0.92);
+.wiki-main {
+  min-width: 0;
 }
 
-.wiki-drawer-frame {
-  width: 100%;
-  height: 100%;
-  border: 0;
-  background: transparent;
+/* Content typography */
+.wiki-content {
+  max-width: 900px;
+  padding-bottom: 40px;
 }
 
-.wiki-backdrop {
-  position: fixed;
-  inset: 0;
+.wiki-content h1 {
+  font-size: 2rem;
+  margin-bottom: 0.4em;
+}
+
+.wiki-content h2 {
+  font-size: 1.4rem;
+  margin-top: 1.4em;
+}
+
+.wiki-content h3 {
+  font-size: 1.15rem;
+  margin-top: 1.2em;
+}
+
+.wiki-content p,
+.wiki-content li {
+  line-height: 1.65;
+  margin: 0.6em 0;
+}
+
+.wiki-content ul {
+  padding-left: 1.2em;
+}
+
+.wiki-content code {
+  background: rgba(255,255,255,0.08);
+  padding: 2px 6px;
+  border-radius: 8px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.wiki-content pre {
   background: rgba(0,0,0,0.35);
-  backdrop-filter: blur(2px);
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 220ms ease;
-  z-index: 999999;
+  padding: 14px;
+  border-radius: 14px;
+  overflow-x: auto;
 }
 
-.wiki-backdrop.open {
-  opacity: 1;
-  pointer-events: auto;
+.wiki-content pre code {
+  background: none;
+  padding: 0;
 }
