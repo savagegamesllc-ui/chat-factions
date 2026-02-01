@@ -70,4 +70,5 @@ router.get('/wiki/*', (req, res) => {
   });
 });
 
-module.exports = router;
+module.exports = { wikiRoutes: router };
+
