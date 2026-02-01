@@ -1,19 +1,20 @@
 # Chat Factions Wiki
 
-Welcome to **Chat Factions** — a system that turns your Twitch chat into an interactive game.
+Welcome to **Chat Factions** — a system that turns Twitch chat into a live, interactive game.
 
-This wiki will walk you through:
-- Using the dashboard UI
-- Adding overlays to OBS
-- Understanding hype and factions
-- Customizing overlays
-- PRO vs FREE features
+This wiki has two goals:
+1. Help streamers set up and run Chat Factions in minutes  
+2. Help viewers understand how to participate and influence the stream
 
-If this is your first time here, start with **Getting Started** below.
+## Start here
+- [Basics: Using the Dashboard UI](basics-ui)
+- [Basics: Adding the Overlay to OBS](basics-obs)
+- [Basics: Hype & Factions](basics-hype)
 
-## Getting Started
-- [Using the Dashboard UI](basics-ui)
-- [Adding an Overlay to OBS](basics-obs)
-- [Understanding Hype & Factions](basics-hype)
+## Guides
+- [Overlays (Hub)](overlays)
+- [Chat Commands](commands)
+- [PRO vs FREE](pro-vs-free)
+- [Troubleshooting](troubleshooting)
 
-Overlay-specific guides can be found in the **Overlays** section.
+> Tip: Click **Wiki (?)** in the dashboard to open this documentation without leaving the page.

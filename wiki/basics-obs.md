@@ -1,50 +1,52 @@
-# Adding a Chat Factions Overlay to OBS
+# Basics: Adding the Overlay to OBS
 
-Chat Factions overlays use OBS **Browser Sources**.
+Chat Factions overlays are added to OBS using a **Browser Source**.
 
-## Step-by-Step Setup
+## Step-by-step setup
 
-### 1️⃣ Open OBS
-- Go to your scene
-- Click **➕** under Sources
-- Choose **Browser**
+### 1) Copy your overlay URL
+In the dashboard, find **OBS Overlay URL** and copy it.
 
-### 2️⃣ Create the Browser Source
-- Name it something like:
-  > Chat Factions Overlay
-- Click **OK**
+### 2) Add a Browser Source in OBS
+In OBS:
+1. Select your scene
+2. In **Sources**, click **+**
+3. Choose **Browser**
+4. Name it (example: `Chat Factions Overlay`)
+5. Click **OK**
 
-### 3️⃣ Paste Your Overlay URL
-In the URL field, paste the **Overlay URL** from your dashboard.
+### 3) Paste the overlay URL
+Paste the copied URL into the Browser Source URL field.
 
-This URL is:
-- Unique to you
-- Safe to use in OBS
-- Automatically connects to your stream
-
-### 4️⃣ Recommended Settings
-Set the following for best results:
+### 4) Recommended settings
+Use these defaults unless you have a reason not to:
 
 - Width: `1920`
 - Height: `1080`
 - ✅ Refresh browser when scene becomes active
-- ❌ Control audio via OBS (unless overlay uses sound)
+- ✅ Shutdown source when not visible (optional; saves resources)
 
-### 5️⃣ Click OK
-Your overlay should appear immediately.
+> If your overlay uses audio later: leave “Control audio via OBS” **off** until you want that behavior.
 
----
+### 5) Layering tips
+- Put the overlay source **above** your camera/game sources if it should appear on top
+- If the overlay is meant to frame your camera, position it accordingly
 
 ## Troubleshooting
 
-**Overlay not showing?**
+### Overlay not showing
 - Confirm the URL is correct
-- Make sure the overlay is enabled in the dashboard
+- Make sure the overlay is enabled/selected in **Layouts**
+- In OBS, right-click the Browser Source → **Refresh**
 
-**Overlay lagging?**
-- Lower FPS cap in overlay settings
-- Reduce particle counts
-- Disable extra effects
+### Overlay shows in dashboard preview but not OBS
+- Double-check the browser source dimensions
+- Ensure no filters are hiding it (opacity, crop, etc.)
 
-**Overlay frozen?**
-- Right-click the Browser Source → Refresh
+### Overlay is laggy
+Go to Layout settings and lower:
+- FPS cap
+- particle counts
+- “max embers” / “max effects” style settings
+
+Next: [Basics: Hype & Factions](basics-hype)
