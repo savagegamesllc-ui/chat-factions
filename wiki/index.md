@@ -7,14 +7,14 @@ This wiki has two goals:
 2. Help viewers understand how to participate and influence the stream
 
 ## Start here
-- [Basics: Using the Dashboard UI](basics/ui)
-- [Basics: Adding the Overlay to OBS](basics/obs)
-- [Basics: Hype & Factions](basics/hype)
+- [Basics: Using the Dashboard UI](basics/ui.md)
+- [Basics: Adding the Overlay to OBS](basics/obs.md)
+- [Basics: Hype & Factions](basics/hype.md)
 
 ## Guides
-- [Overlays (Hub)](basics/overlays/overlays)
-- [Chat Commands](commands/commands)
-- [PRO vs FREE](pro-vs-free)
-- [Troubleshooting](troubleshooting/troubleshooting)
+- [Overlays (Hub)](basics/overlays/overlays.md)
+- [Chat Commands](commands/commands.md)
+- [PRO vs FREE](pro-vs-free.md)
+- [Troubleshooting](troubleshooting/troubleshooting.md)
 
 > Tip: Click **Wiki (?)** in the dashboard to open this documentation without leaving the page.
