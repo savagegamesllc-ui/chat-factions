@@ -7,9 +7,9 @@ This wiki has two goals:
 2. Help viewers understand how to participate and influence the stream
 
 ## Start here
-- [Basics: Using the Dashboard UI](basics-ui)
-- [Basics: Adding the Overlay to OBS](basics-obs)
-- [Basics: Hype & Factions](basics-hype)
+- [Basics: Using the Dashboard UI](ui)
+- [Basics: Adding the Overlay to OBS](obs)
+- [Basics: Hype & Factions](hype)
 
 ## Guides
 - [Overlays (Hub)](overlays)
