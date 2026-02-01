@@ -151,6 +151,5 @@ app.use(errorHandler);
 app.listen(config.port, () => {
   console.log(`[server] listening on ${config.appBaseUrl}`);
 
-app.use(require('./routes/wikiRoutes'));
 
 });
