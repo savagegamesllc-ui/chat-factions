@@ -31,7 +31,7 @@ const { eventApiPageRoutes } = require('./routes/eventApiPageRoutes');
 const { ownerStreamersRoutes } = require('./routes/ownerStreamersRoutes');
 const { startDecayLoop } = require('./services/decayLoopService');
 
-const wikiRoutes = require('./routes/wikiRoutes');
+const { wikiRoutes } = require('./routes/wikiRoutes');
 const app = express();
 
 startDecayLoop({ intervalMs: 15000 });
