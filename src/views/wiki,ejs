@@ -1,0 +1,42 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Chat Factions Wiki</title>
+  <link rel="stylesheet" href="/public/css/app.css" />
+</head>
+<body>
+  <div class="container">
+
+    <div class="header">
+      <div class="brand">
+        <div class="brand-dot"></div>
+        <div>
+          <h1>Chat Factions Wiki</h1>
+          <div class="sub">Learn how the system works</div>
+        </div>
+      </div>
+
+      <div class="nav">
+        <a href="/wiki" class="<%= slug === 'index' ? 'active' : '' %>">Home</a>
+        <a href="/wiki/basics-ui">UI</a>
+        <a href="/wiki/basics-obs">OBS Setup</a>
+        <a href="/wiki/basics-hype">Hype</a>
+        <a href="/wiki/overlays">Overlays</a>
+        <a href="/wiki/factions">Factions</a>
+        <a href="/wiki/hype">Hype</a>
+        <a href="/wiki/commands">Commands</a>
+        <a href="/wiki/overlays">Overlays</a>
+        <a href="/wiki/pro-vs-free">PRO</a>
+      </div>
+    </div>
+
+    <div class="card">
+      <article class="wiki-content">
+        <%- content %>
+      </article>
+    </div>
+
+  </div>
+</body>
+</html>

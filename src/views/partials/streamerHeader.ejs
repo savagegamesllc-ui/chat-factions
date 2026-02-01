@@ -16,5 +16,50 @@
     <a href="/admin/billing" class="<%= activeTab === 'billing' ? 'active' : '' %>">Billing</a>
     <a href="/admin/chat" class="<%= activeTab === 'chat' ? 'active' : '' %>">Chat</a>
     <a href="/admin/event-Api" class="<%= activeTab === 'eventApi' ? 'active' : '' %>">Event API</a>
+
+    <!-- Wiki: new tab -->
+    <a
+      href="/wiki"
+      target="_blank"
+      rel="noopener noreferrer"
+      class="<%= activeTab === 'wiki' ? 'active' : '' %>"
+      title="Open Wiki in a new tab"
+    >Wiki</a>
+
+    <!-- Wiki: slide-out drawer toggle -->
+    <button
+      type="button"
+      class="nav-wiki-btn"
+      id="wikiToggleBtn"
+      aria-label="Toggle Wiki panel"
+      title="Toggle Wiki panel"
+    >?</button>
   </div>
 </div>
+
+<!-- Slide-out Wiki Drawer (available on every page that includes this header) -->
+<div class="wiki-drawer" id="wikiDrawer" aria-hidden="true">
+  <div class="wiki-drawer__backdrop" data-wiki-close></div>
+
+  <div class="wiki-drawer__panel" role="dialog" aria-label="Wiki">
+    <div class="wiki-drawer__topbar">
+      <div class="wiki-drawer__title">Wiki</div>
+
+      <div class="wiki-drawer__actions">
+        <a class="btn" href="/wiki" target="_blank" rel="noopener noreferrer">Open full</a>
+        <button type="button" class="btn" data-wiki-close>Close</button>
+      </div>
+    </div>
+
+    <iframe
+      class="wiki-drawer__frame"
+      src="/wiki"
+      title="Chat Factions Wiki"
+      loading="lazy"
+      referrerpolicy="no-referrer"
+    ></iframe>
+  </div>
+</div>
+
+<!-- No inline script (CSP-safe). Load a small JS helper instead. -->
+<script src="/public/js/wikiDrawer.js" defer></script>

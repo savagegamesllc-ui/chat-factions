@@ -12,6 +12,10 @@ const { broadcast } = require('./realtimeHub');
 
 const clients = new Map(); // streamerId -> { client, channel }
 
+/* ---------------------------
+ * helpers (existing)
+ * -------------------------- */
+
 function getUserKey(tags) {
   // stable key per user; prefer user-id
   const uid = tags && (tags['user-id'] || tags.userId);
@@ -36,59 +40,6 @@ function cmdMatches(cmd, primary, aliases) {
   return false;
 }
 
-function parseCommand(message, chatCfg) {
-  const text = String(message || '').trim();
-  if (!text.startsWith('!')) return null;
-
-  const parts = text.split(/\s+/);
-  const cmd = normalizeCmd(parts[0] || '');
-
-  const hypeName = String(chatCfg?.commands?.hype?.name || '!hype');
-  const hypeAliases = chatCfg?.commands?.hype?.aliases || [];
-
-  const maxName = String(chatCfg?.commands?.maxhype?.name || '!maxhype');
-  const maxAliases = chatCfg?.commands?.maxhype?.aliases || [];
-
-  const voteName = String(chatCfg?.commands?.vote?.name || '!vote');
-  const voteAliases = chatCfg?.commands?.vote?.aliases || [];
-
-  // !hype ORDER 5
-  if (cmdMatches(cmd, hypeName, hypeAliases)) {
-    const factionKey = (parts[1] || '').toUpperCase();
-    const delta = Number(parts[2] || 0);
-    if (!factionKey) return null;
-    return { type: 'hype', action: 'hype', factionKey, delta };
-  }
-
-  // !maxhype ORDER
-  if (cmdMatches(cmd, maxName, maxAliases)) {
-    const factionKey = (parts[1] || '').toUpperCase();
-    if (!factionKey) return null;
-    // big visible spike (still capped later)
-    return { type: 'hype', action: 'maxhype', factionKey, delta: 100 };
-  }
-
-  // !vote ORDER   (optional; safe even if you don't use it yet)
-  if (cmdMatches(cmd, voteName, voteAliases)) {
-    const factionKey = (parts[1] || '').toUpperCase();
-    if (!factionKey) return null;
-
-    // If they type "!vote ORDER 3" allow it; else use configured weight/default
-    const maybe = parts[2];
-    const weight = Number(chatCfg?.commands?.vote?.weight ?? 1);
-
-    const delta = (maybe != null && maybe !== '')
-      ? Number(maybe)
-      : Number(weight);
-
-    if (!Number.isFinite(delta) || delta === 0) return null;
-    return { type: 'hype', action: 'vote', factionKey, delta };
-  }
-
-  return null;
-}
-
-
 function isBroadcasterOrMod(tags) {
   const badges = tags?.badges || {};
   const badgeInfo = tags?.badgeInfo || {};
@@ -105,6 +56,202 @@ function isBroadcasterOrMod(tags) {
 
   return { isBroadcaster, isMod };
 }
+
+/* ---------------------------
+ * helpers (NEW: viewer + faction membership)
+ * -------------------------- */
+
+function getTwitchUserId(tags) {
+  const uid = tags && (tags['user-id'] || tags.userId);
+  return uid ? String(uid) : null;
+}
+
+function displayNameFromTags(tags) {
+  return String(tags?.['display-name'] || tags?.username || 'Viewer');
+}
+
+function normalizeFactionInput(s) {
+  return String(s || '').trim();
+}
+
+async function getOrCreateViewer(streamerId, tags) {
+  const twitchUserId = getTwitchUserId(tags);
+  if (!twitchUserId) return null;
+
+  // Viewer is unique on (streamerId, twitchUserId)
+  const viewer = await prisma.viewer.upsert({
+    where: {
+      streamerId_twitchUserId: {
+        streamerId: String(streamerId),
+        twitchUserId,
+      },
+    },
+    create: {
+      streamerId: String(streamerId),
+      twitchUserId,
+      displayName: displayNameFromTags(tags),
+    },
+    update: {
+      displayName: displayNameFromTags(tags),
+    },
+    select: { id: true, streamerId: true, twitchUserId: true, displayName: true },
+  });
+
+  return viewer;
+}
+
+// Resolve a faction for this streamer by key (preferred) or name
+async function resolveFactionForStreamer(streamerId, factionRaw) {
+  const raw = normalizeFactionInput(factionRaw);
+  if (!raw) return null;
+
+  const keyGuess = raw.toUpperCase();
+
+  let f = await prisma.faction.findFirst({
+    where: { streamerId: String(streamerId), key: keyGuess, isActive: true },
+    select: { id: true, key: true, name: true },
+  });
+  if (f) return f;
+
+  f = await prisma.faction.findFirst({
+    where: {
+      streamerId: String(streamerId),
+      name: { equals: raw, mode: 'insensitive' },
+      isActive: true,
+    },
+    select: { id: true, key: true, name: true },
+  });
+
+  return f || null;
+}
+
+// Returns viewer's current faction key (if any). If multiple exist, use most recent.
+async function getViewerFactionKey(streamerId, viewerId) {
+  const mem = await prisma.factionMembership.findFirst({
+    where: { streamerId: String(streamerId), viewerId: String(viewerId) },
+    orderBy: { joinedAt: 'desc' },
+    select: { faction: { select: { key: true, name: true } } },
+  });
+
+  return mem?.faction?.key || null;
+}
+
+// Enforce "one faction per viewer per streamer" in service logic.
+// Your schema allows multiple memberships, so we delete existing then create the new one.
+async function setViewerFaction(streamerId, viewerId, factionId) {
+  await prisma.factionMembership.deleteMany({
+    where: { streamerId: String(streamerId), viewerId: String(viewerId) },
+  });
+
+  return prisma.factionMembership.create({
+    data: {
+      streamerId: String(streamerId),
+      viewerId: String(viewerId),
+      factionId: String(factionId),
+      role: 'MEMBER',
+    },
+  });
+}
+
+/* ---------------------------
+ * parsing (UPDATED)
+ * -------------------------- */
+
+function parseCommand(message, chatCfg) {
+  const text = String(message || '').trim();
+  if (!text.startsWith('!')) return null;
+
+  const parts = text.split(/\s+/);
+  const cmd = normalizeCmd(parts[0] || '');
+
+  const hypeName = String(chatCfg?.commands?.hype?.name || '!hype');
+  const hypeAliases = chatCfg?.commands?.hype?.aliases || [];
+
+  const maxName = String(chatCfg?.commands?.maxhype?.name || '!maxhype');
+  const maxAliases = chatCfg?.commands?.maxhype?.aliases || [];
+
+  const voteName = String(chatCfg?.commands?.vote?.name || '!vote');
+  const voteAliases = chatCfg?.commands?.vote?.aliases || [];
+
+  // NEW: join/switch commands (defaults; optionally configurable later)
+  const joinName = String(chatCfg?.commands?.join?.name || '!join');
+  const joinAliases = chatCfg?.commands?.join?.aliases || [];
+
+  const factionName = String(chatCfg?.commands?.faction?.name || '!faction');
+  const factionAliases = chatCfg?.commands?.faction?.aliases || ['!switch', '!switchfaction'];
+
+  // !join Knights
+  if (cmdMatches(cmd, joinName, joinAliases)) {
+    const factionRaw = parts.slice(1).join(' ').trim();
+    if (!factionRaw) return null;
+    return { type: 'membership', action: 'join', factionRaw };
+  }
+
+  // !faction Knights
+  if (cmdMatches(cmd, factionName, factionAliases)) {
+    const factionRaw = parts.slice(1).join(' ').trim();
+    if (!factionRaw) return null;
+    return { type: 'membership', action: 'faction', factionRaw };
+  }
+
+  // !hype 10    (NEW desired behavior: use membership)
+  // keep old: !hype ORDER 5
+  if (cmdMatches(cmd, hypeName, hypeAliases)) {
+    const a1 = parts[1];
+    const a2 = parts[2];
+
+    // !hype (no args) => default to 1 to be friendly
+    if (a1 == null || a1 === '') {
+      return { type: 'hype', action: 'hype', mode: 'member', delta: 1 };
+    }
+
+    // If first arg is numeric -> membership hype
+    const maybePoints = Number(a1);
+    if (Number.isFinite(maybePoints)) {
+      const delta = maybePoints;
+      if (!Number.isFinite(delta) || delta === 0) return null;
+      return { type: 'hype', action: 'hype', mode: 'member', delta };
+    }
+
+    // Back-compat: !hype FACTION 5
+    const factionKey = String(a1 || '').toUpperCase();
+    const delta = Number(a2 || 0);
+    if (!factionKey) return null;
+    if (!Number.isFinite(delta) || delta === 0) return null;
+    return { type: 'hype', action: 'hype', mode: 'explicit', factionKey, delta };
+  }
+
+  // !maxhype ORDER
+  if (cmdMatches(cmd, maxName, maxAliases)) {
+    const factionKey = (parts[1] || '').toUpperCase();
+    if (!factionKey) return null;
+    // big visible spike (still capped later)
+    return { type: 'hype', action: 'maxhype', mode: 'explicit', factionKey, delta: 100 };
+  }
+
+  // !vote ORDER   (optional; safe even if you don't use it yet)
+  if (cmdMatches(cmd, voteName, voteAliases)) {
+    const factionKey = (parts[1] || '').toUpperCase();
+    if (!factionKey) return null;
+
+    // If they type "!vote ORDER 3" allow it; else use configured weight/default
+    const maybe = parts[2];
+    const weight = Number(chatCfg?.commands?.vote?.weight ?? 1);
+
+    const delta = (maybe != null && maybe !== '')
+      ? Number(maybe)
+      : Number(weight);
+
+    if (!Number.isFinite(delta) || delta === 0) return null;
+    return { type: 'hype', action: 'vote', mode: 'explicit', factionKey, delta };
+  }
+
+  return null;
+}
+
+/* ---------------------------
+ * runtime
+ * -------------------------- */
 
 async function startChatForStreamer(streamerId) {
   if (!streamerId) {
@@ -199,6 +346,84 @@ async function startChatForStreamer(streamerId) {
         if (isCmd) console.log('[cmd] not recognized', { streamerId: streamer.id, self, text });
         return;
       }
+
+      /* ---------------------------
+       * membership commands
+       * -------------------------- */
+
+      if (parsed.type === 'membership') {
+        const viewer = await getOrCreateViewer(streamer.id, tags);
+        if (!viewer) return;
+
+        const f = await resolveFactionForStreamer(streamer.id, parsed.factionRaw);
+        if (!f) {
+          // Optional: chat feedback (left off by default)
+          // await client.say(channel, `Unknown faction "${parsed.factionRaw}".`);
+          console.log('[cmd] membership: unknown faction', {
+            streamerId: streamer.id,
+            viewerId: viewer.id,
+            factionRaw: parsed.factionRaw,
+          });
+          return;
+        }
+
+        if (parsed.action === 'join') {
+          const existingKey = await getViewerFactionKey(streamer.id, viewer.id);
+          if (existingKey) {
+            // Optional: chat feedback
+            // await client.say(channel, `You're already in ${existingKey}. Use !faction <name> to switch.`);
+            console.log('[cmd] membership: join blocked (already in faction)', {
+              streamerId: streamer.id,
+              viewerId: viewer.id,
+              existingKey,
+            });
+            return;
+          }
+        }
+
+        await setViewerFaction(streamer.id, viewer.id, f.id);
+
+        console.log('[cmd] membership updated', {
+          streamerId: streamer.id,
+          viewerId: viewer.id,
+          twitchUserId: viewer.twitchUserId,
+          viewerDisplay: viewer.displayName,
+          factionKey: f.key,
+          factionName: f.name,
+          action: parsed.action,
+        });
+
+        return;
+      }
+
+      /* ---------------------------
+       * hype commands (membership mode)
+       * -------------------------- */
+
+      // If "!hype 10", resolve membership to determine factionKey
+      if (parsed.type === 'hype' && parsed.mode === 'member') {
+        const viewer = await getOrCreateViewer(streamer.id, tags);
+        if (!viewer) return;
+
+        const factionKey = await getViewerFactionKey(streamer.id, viewer.id);
+        if (!factionKey) {
+          // Optional: prompt to join
+          // await client.say(channel, `Join a faction first: !join <faction>`);
+          console.log('[cmd] hype blocked: no membership', {
+            streamerId: streamer.id,
+            viewerId: viewer.id,
+            twitchUserId: viewer.twitchUserId,
+          });
+          return;
+        }
+
+        // Mutate parsed so existing pipeline can proceed unchanged
+        parsed.factionKey = factionKey;
+      }
+
+      /* ---------------------------
+       * common hype pipeline (existing)
+       * -------------------------- */
 
       // Cap per command
       const deltaRaw = Number(parsed.delta || 0);
