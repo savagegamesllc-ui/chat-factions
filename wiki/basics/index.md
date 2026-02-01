@@ -11,8 +11,8 @@ If you are new, follow these pages in order:
 Once you understand these, you’ll be ready to explore individual overlays and advanced features.
 
 ## Basics Guides
-- [Using the Dashboard UI](ui)
-- [Adding the Overlay to OBS](obs)
-- [Hype & Factions](hype)
+- [Using the Dashboard UI](wiki/basics/ui)
+- [Adding the Overlay to OBS](wiki/basics/obs)
+- [Hype & Factions](wiki/basics/hype)
 
 > Tip: You can open this wiki at any time using the **Wiki (?)** button in the dashboard without leaving your current page.

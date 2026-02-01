@@ -12,9 +12,9 @@ This wiki has two goals:
 - [Basics: Hype & Factions](wiki/basics/hype)
 
 ## Guides
-- [Overlays (Hub)](wiki/basics/overlays/overlays.md)
-- [Chat Commands](wiki/commands/commands.md)
-- [PRO vs FREE](wiki/pro-vs-free.md)
-- [Troubleshooting](wiki/troubleshooting/troubleshooting.md)
+- [Overlays (Hub)](basics/overlays/overlays)
+- [Chat Commands](commands/commands)
+- [PRO vs FREE](pro-vs-free)
+- [Troubleshooting](troubleshooting/troubleshooting)
 
 > Tip: Click **Wiki (?)** in the dashboard to open this documentation without leaving the page.
