@@ -7,46 +7,66 @@ const marked = require('marked');
 
 const router = express.Router();
 
-const WIKI_DIR = path.join(__dirname, '../../wiki');
+const WIKI_ROOT = path.join(__dirname, '../../wiki');
 
-function getPage(slug) {
-  const file = slug === 'index'
-    ? 'index.md'
-    : `${slug}.md`;
+/**
+ * Resolve a wiki request path to a markdown file.
+ * Priority:
+ *  1) <path>.md
+ *  2) <path>/index.md
+ */
+function resolveWikiFile(requestPath) {
+  const clean = requestPath.replace(/^\/+|\/+$/g, '');
 
-  const fullPath = path.join(WIKI_DIR, file);
-  if (!fs.existsSync(fullPath)) return null;
+  const directFile = path.join(WIKI_ROOT, `${clean}.md`);
+  if (fs.existsSync(directFile)) return directFile;
 
-  return fs.readFileSync(fullPath, 'utf8');
+  const indexFile = path.join(WIKI_ROOT, clean, 'index.md');
+  if (fs.existsSync(indexFile)) return indexFile;
+
+  return null;
 }
 
+/**
+ * /wiki
+ */
 router.get('/wiki', (req, res) => {
-  const md = getPage('index');
-  const html = marked.parse(md || '# Wiki Coming Soon');
+  const file = resolveWikiFile('index');
+
+  if (!file) {
+    return res.status(404).send('Wiki index not found');
+  }
+
+  const md = fs.readFileSync(file, 'utf8');
 
   res.render('wiki', {
     title: 'Wiki',
-    content: html,
-    slug: 'index'
+    content: marked.parse(md),
+    path: '/'
   });
 });
 
-router.get('/wiki/:slug', (req, res) => {
-  const { slug } = req.params;
-  const md = getPage(slug);
+/**
+ * /wiki/*
+ */
+router.get('/wiki/*', (req, res) => {
+  const wikiPath = req.params[0]; // everything after /wiki/
+  const file = resolveWikiFile(wikiPath);
 
-  if (!md) {
+  if (!file) {
     return res.status(404).render('wiki', {
       title: 'Not Found',
-      content: '<h2>Page not found</h2>',
-      slug
+      content: `<h2>Page not found</h2><p>No wiki page for <code>${wikiPath}</code></p>`,
+      path: wikiPath
     });
   }
 
+  const md = fs.readFileSync(file, 'utf8');
+
   res.render('wiki', {
-    title: slug.replace(/-/g, ' '),
+    title: wikiPath.split('/').pop(),
     content: marked.parse(md),
-    slug
+    path: wikiPath
   });
 });
 

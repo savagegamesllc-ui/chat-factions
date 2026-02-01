@@ -31,7 +31,7 @@ const { eventApiPageRoutes } = require('./routes/eventApiPageRoutes');
 const { ownerStreamersRoutes } = require('./routes/ownerStreamersRoutes');
 const { startDecayLoop } = require('./services/decayLoopService');
 
-
+const wikiRoutes = require('./routes/wikiRoutes');
 const app = express();
 
 startDecayLoop({ intervalMs: 15000 });
@@ -147,7 +147,7 @@ app.use((req, res) => {
 
 // Error handler
 app.use(errorHandler);
-
+app.use(wikiRoutes);
 app.listen(config.port, () => {
   console.log(`[server] listening on ${config.appBaseUrl}`);
 
