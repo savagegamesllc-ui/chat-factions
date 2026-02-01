@@ -19,13 +19,13 @@
 
       <div class="nav">
         <a href="/wiki" class="<%= slug === 'index' ? 'active' : '' %>">Home</a>
-        <a href="/wiki/basics-ui">UI</a>
-        <a href="/wiki/basics-obs">OBS Setup</a>
-        <a href="/wiki/basics-hype">Hype</a>
-        <a href="/wiki/overlays">Overlays</a>
-        <a href="/wiki/factions">Factions</a>
-        <a href="/wiki/hype">Hype</a>
-        <a href="/wiki/commands">Commands</a>
+        <a href="/wiki/basics/ui">UI</a>
+        <a href="/wiki/basics/obs">OBS Setup</a>
+        <a href="/wiki/basics/hype">Hype</a>
+        <a href="/wiki/overlays/overlays">Overlays</a>
+        <a href="/wiki/basics/factions">Factions</a>
+        <a href="/wiki/basics/hype">Hype</a>
+        <a href="/wiki/commands/commands">Commands</a>
         <a href="/wiki/overlays">Overlays</a>
         <a href="/wiki/pro-vs-free">PRO</a>
       </div>
