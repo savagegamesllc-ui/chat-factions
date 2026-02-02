@@ -301,7 +301,7 @@ export function init({ root, config, api }) {
     const boost = clamp(cfg.boostSpawnPerSec ?? 4.25, 0, 60);
 
     // non-linear ramp so low hype still feels alive
-    const ramp = clamp01(0.15 + 0.85 * Math.pow(hSmooth, 0.85));
+    const ramp = clamp01(Math.pow(hSmooth, 0.85));
     const rate = base + boost * ramp;
 
     spawnCarry += rate * dt;

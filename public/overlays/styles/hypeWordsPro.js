@@ -524,7 +524,7 @@ export function init({ root, config, api }) {
     const base = clamp(cfg.baseSpawnPerSec ?? 0.55, 0, 40);
     const boost = clamp(cfg.boostSpawnPerSec ?? 6.25, 0, 80);
 
-    const ramp = clamp01(0.12 + 0.88 * Math.pow(hSmooth, 0.85));
+    const ramp = clamp01(Math.pow(hSmooth, 0.85));
     const rate = base + boost * ramp;
 
     spawnCarry += rate * dt;
