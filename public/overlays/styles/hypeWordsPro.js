@@ -54,7 +54,7 @@ export const meta = {
     maxTotalClamp: 2600,
 
     // Spawn tuning
-    baseSpawnPerSec: 0.55,
+    baseSpawnPerSec: 0,
     boostSpawnPerSec: 6.25,
     maxActive: 22,
     maxSpawnPerFrame: 5,

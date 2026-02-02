@@ -36,7 +36,7 @@ export const meta = {
     maxTotalClamp: 2200,     // safety clamp on total
 
     // Spawn tuning
-    baseSpawnPerSec: 0.45,   // at ~0 hype
+    baseSpawnPerSec: 0,   // at ~0 hype
     boostSpawnPerSec: 4.25,  // additional at max hype
     maxActive: 16,           // max words on screen at once (perf cap)
 
