@@ -1,0 +1,239 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' https: http: ws: wss:; frame-src 'self';"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Overlay Lab</title>
+
+    <link rel="stylesheet" href="/public/css/app.css" />
+    <style>
+      /* small, self-contained layout tweaks */
+      .lab {
+        max-width: 1400px;
+      }
+      .split {
+        display: grid;
+        grid-template-columns: 420px minmax(0, 1fr);
+        gap: 14px;
+        align-items: start;
+      }
+      @media (max-width: 1100px) {
+        .split { grid-template-columns: 1fr; }
+      }
+      .previewWrap {
+        border-radius: var(--radius);
+        border: 1px solid var(--border);
+        background: rgba(0,0,0,0.18);
+        overflow: hidden;
+        box-shadow: var(--shadow);
+      }
+      .previewTopbar {
+        display:flex;
+        justify-content:space-between;
+        align-items:center;
+        padding:10px 12px;
+        border-bottom: 1px solid rgba(255,255,255,0.10);
+        background: rgba(255,255,255,0.04);
+      }
+      .previewFrame {
+        width: 100%;
+        aspect-ratio: 16 / 9;
+        border: 0;
+        display: block;
+        background: transparent;
+      }
+      .kv {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 8px 10px;
+        align-items: center;
+        font-size: 12px;
+        color: var(--muted);
+      }
+      .kv b { color: var(--text); font-weight: 700; }
+      .pillBtnRow { display:flex; flex-wrap: wrap; gap: 8px; }
+      .errBox {
+        max-height: 240px;
+        overflow:auto;
+      }
+      .mini {
+        font-size: 12px;
+        color: var(--muted);
+      }
+      .rangeRow {
+        display:grid;
+        grid-template-columns: 1fr 84px;
+        gap: 10px;
+        align-items:center;
+      }
+      .rangeRow input[type="number"] { width: 100%; }
+      .tagRow {
+        display:flex;
+        flex-wrap:wrap;
+        gap: 8px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container lab">
+      <div class="header">
+        <div class="brand">
+          <div class="brand-dot"></div>
+          <div>
+            <h1>Overlay Lab</h1>
+            <div class="sub">Load a style, simulate hype, tweak config, and capture runtime errors.</div>
+          </div>
+        </div>
+
+        <div class="nav">
+          <a href="/admin">Streamer Dashboard</a>
+          <a href="/owner">Owner</a>
+          <a class="active" href="/public/dev/overlayTool.html">Overlay Lab</a>
+        </div>
+      </div>
+
+      <div id="status" class="notice" style="display:none;"></div>
+
+      <div class="split">
+        <!-- LEFT: Controls -->
+        <div class="grid">
+          <div class="card">
+            <div class="card-title">
+              <h2>Load Overlay</h2>
+              <span class="hint">Runs inside a sandbox iframe</span>
+            </div>
+            <div class="hr"></div>
+
+            <label class="small muted">Style Key</label>
+            <input id="styleKey" class="input mono" placeholder="e.g. crownfall" list="stylePresets" />
+            <datalist id="stylePresets">
+              <option value="crownfall"></option>
+              <option value="flameEdge"></option>
+              <option value="runeStorm"></option>
+              <option value="focusRingDub"></option>
+              <option value="constellationDrift"></option>
+              <option value="hypeWords"></option>
+              <option value="livingLandscape"></option>
+            </datalist>
+
+            <div class="hr"></div>
+
+            <label class="small muted">Config (JSON)</label>
+            <textarea id="configJson" rows="10" spellcheck="false" class="input mono"
+              placeholder='{"fpsCap":60,"emberMax":420}'></textarea>
+
+            <div class="hr"></div>
+            <div class="pillBtnRow">
+              <button id="btnLoad" class="btn primary">Load / Reload</button>
+              <button id="btnApplyConfig" class="btn">Apply Config</button>
+              <button id="btnResetConfig" class="btn">Reset Config</button>
+              <button id="btnClearErrors" class="btn">Clear Errors</button>
+            </div>
+
+            <div class="hr"></div>
+
+            <div class="kv">
+              <div>Sandbox status</div><div><b id="sandboxState">idle</b></div>
+              <div>Last ping</div><div><b id="lastPing">—</b></div>
+              <div>Last snap sent</div><div><b id="lastSnap">—</b></div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-title">
+              <h2>Hype Simulation</h2>
+              <span class="hint">Variable hype + optional oscillation</span>
+            </div>
+
+            <div class="hr"></div>
+
+            <div class="rangeRow">
+              <div>
+                <label class="small muted">Total Hype</label>
+                <input id="totalHype" type="range" min="0" max="1200" step="1" value="0" />
+              </div>
+              <div>
+                <label class="small muted">Value</label>
+                <input id="totalHypeNum" type="number" min="0" max="1200" step="1" value="0" class="input mono" />
+              </div>
+            </div>
+
+            <div class="hr"></div>
+
+            <div class="tagRow">
+              <label class="pill">
+                <input id="oscillate" type="checkbox" />
+                Oscillate
+              </label>
+              <label class="pill">
+                <input id="autoSend" type="checkbox" checked />
+                Auto-send
+              </label>
+              <button id="btnSendSnap" class="btn">Send Now</button>
+              <button id="btnZero" class="btn danger">Zero</button>
+            </div>
+
+            <div class="hr"></div>
+
+            <label class="small muted">Faction A</label>
+            <div class="row">
+              <input id="faColor" class="input mono" value="#ff6a00" />
+              <input id="faShare" type="range" min="0" max="100" step="1" value="50" style="flex:1" />
+              <span class="mono small" id="faShareLbl">50%</span>
+            </div>
+
+            <div class="hr"></div>
+
+            <label class="small muted">Faction B</label>
+            <div class="row">
+              <input id="fbColor" class="input mono" value="#ff2e2e" />
+              <input id="fbShare" type="range" min="0" max="100" step="1" value="50" style="flex:1" />
+              <span class="mono small" id="fbShareLbl">50%</span>
+            </div>
+
+            <div class="hr"></div>
+
+            <div class="mini">
+              Snap shape matches your overlays: <span class="mono">{ factions: [{ meter, colorHex }, ...] }</span>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-title">
+              <h2>Errors</h2>
+              <span class="hint">From sandbox iframe</span>
+            </div>
+            <div class="hr"></div>
+            <pre id="errors" class="code errBox mono">No errors.</pre>
+          </div>
+        </div>
+
+        <!-- RIGHT: Preview -->
+        <div class="previewWrap">
+          <div class="previewTopbar">
+            <div class="row" style="justify-content:flex-start; gap:10px;">
+              <span class="badge pro">Sandbox Preview</span>
+              <span class="badge free mono" id="loadedKey">—</span>
+            </div>
+            <div class="row" style="gap:8px;">
+              <button id="btnPopout" class="btn">Pop-out</button>
+              <button id="btnHardReload" class="btn">Hard Reload</button>
+            </div>
+          </div>
+          <iframe
+            id="frame"
+            class="previewFrame"
+            title="Overlay Sandbox"
+            sandbox="allow-scripts allow-same-origin"
+            src="about:blank"></iframe>
+        </div>
+      </div>
+    </div>
+
+    <script type="module" src="/public/dev/overlayTool.js"></script>
+  </body>
+</html>
