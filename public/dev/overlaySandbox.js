@@ -78,10 +78,49 @@ async function loadStyleByKey(styleKey) {
   throw lastErr || new Error(`Failed to import style: ${key}`);
 }
 
+function isLikelyCspBlobImportBlock(err, moduleUrl) {
+  const msg = String(err?.message || err || '').toLowerCase();
+  const url = String(moduleUrl || '').toLowerCase();
+
+  // Typical browser phrasing for this situation:
+  // "Failed to fetch dynamically imported module: blob:..."
+  // plus the console CSP violation.
+  return url.startsWith('blob:') && (
+    msg.includes('failed to fetch dynamically imported module') ||
+    msg.includes('dynamically imported module') ||
+    msg.includes('failed to fetch') ||
+    msg.includes('importing a module script failed') ||
+    msg.includes('load failed')
+  );
+}
+
+function makeCspGuidance(moduleUrl) {
+  // Keep this short and actionable—this is what Jay needs to fix server-side.
+  return (
+    `Local overlay import blocked by CSP.\n` +
+    `Your server is sending CSP "script-src 'self'" (no blob:), so import(${moduleUrl}) is blocked.\n\n` +
+    `Fix (dev-only recommended): allow blob: for /public/dev/*\n` +
+    `- script-src 'self' blob:\n` +
+    `- script-src-elem 'self' blob:\n\n` +
+    `Note: meta CSP in overlaySandbox.html cannot override CSP headers.`
+  );
+}
+
 async function loadStyleByUrl(moduleUrl) {
   // moduleUrl can be blob:... created in the parent tool (Overlay Lab)
-  // CSP must allow: script-src 'self' blob:
-  return await import(moduleUrl);
+  // This requires CSP header to allow blob: in script-src / script-src-elem
+  try {
+    return await import(moduleUrl);
+  } catch (e) {
+    // Improve the error for the common CSP block case
+    if (isLikelyCspBlobImportBlock(e, moduleUrl)) {
+      const err = new Error(makeCspGuidance(moduleUrl));
+      // Preserve original stack/message for debugging context
+      err.cause = e;
+      throw err;
+    }
+    throw e;
+  }
 }
 
 async function main() {
@@ -178,5 +217,14 @@ async function main() {
 }
 
 main().catch((e) => {
+  // If we wrapped a CSP-related error, show the guidance clearly
   post('DEV_ERROR', { message: e?.message || String(e), stack: e?.stack || '' });
+
+  // Also surface original cause if present (optional extra context)
+  if (e && e.cause) {
+    post('DEV_ERROR', {
+      message: `Underlying error: ${e.cause?.message || String(e.cause)}`,
+      stack: e.cause?.stack || '',
+    });
+  }
 });

@@ -6,7 +6,29 @@ require('dotenv').config();
 const path = require('path');
 const express = require('express');
 const session = require('express-session');
-const helmet = require('helmet');
+// Security headers
+app.use(helmet());
+
+// ✅ Dev-only CSP relaxation for Overlay Lab (allows import(blob:...))
+// This must be AFTER helmet() and BEFORE /public static.
+app.use(
+  '/public/dev',
+  helmet.contentSecurityPolicy({
+    useDefaults: true,
+    directives: {
+      // Keep it tight, only allow what the dev tool needs.
+      "default-src": ["'self'"],
+      "script-src": ["'self'", "blob:"],
+      // Some browsers enforce script-src-elem separately; your console mentioned fallback behavior.
+      "script-src-elem": ["'self'", "blob:"],
+      "style-src": ["'self'", "'unsafe-inline'"],
+      "img-src": ["'self'", "data:"],
+      "connect-src": ["'self'", "https:", "http:", "ws:", "wss:"],
+      "frame-src": ["'self'"],
+    },
+  })
+);
+
 const compression = require('compression');
 
 const { config } = require('./config/env');
