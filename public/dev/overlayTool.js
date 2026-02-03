@@ -11,6 +11,17 @@ function showStatus(msg, isErr = false) {
   showStatus._t = setTimeout(() => (el.style.display = 'none'), 3500);
 }
 
+let localModuleUrl = null;
+let localModuleName = null;
+
+function revokeLocalModule() {
+  if (localModuleUrl) {
+    URL.revokeObjectURL(localModuleUrl);
+    localModuleUrl = null;
+    localModuleName = null;
+  }
+}
+
 function safeJsonParse(text) {
   const raw = String(text || '').trim();
   if (!raw) return {};
@@ -87,27 +98,45 @@ function currentConfigFromTextarea() {
 }
 
 function loadSandbox(styleKey, configObj) {
-  const key = String(styleKey || '').trim();
-  if (!key) {
-    showStatus('Style key is required.', true);
-    return;
-  }
-
-  state.styleKey = key;
-  state.config = configObj ?? {};
+  const cfgObj = configObj ?? {};
+  state.config = cfgObj;
 
   const cfgB64 = encodeConfig(state.config);
-  const url = `/public/dev/overlaySandbox.html?styleKey=${encodeURIComponent(key)}&config=${encodeURIComponent(cfgB64)}&ts=${Date.now()}`;
 
-  $('loadedKey').textContent = key;
+  // If a local file is chosen, load by moduleUrl, else load by styleKey
+  const usingLocal = !!localModuleUrl;
+
+  if (!usingLocal) {
+    const key = String(styleKey || '').trim();
+    if (!key) {
+      showStatus('Style key is required (or upload a local file).', true);
+      return;
+    }
+    state.styleKey = key;
+    localStorage.setItem('overlayLab.styleKey', key);
+  }
+
+  const qs = new URLSearchParams();
+  if (usingLocal) {
+    qs.set('moduleUrl', localModuleUrl);
+    qs.set('moduleName', localModuleName || 'localOverlay.js');
+  } else {
+    qs.set('styleKey', state.styleKey);
+  }
+  qs.set('config', cfgB64);
+  qs.set('ts', String(Date.now()));
+
+  const url = `/public/dev/overlaySandbox.html?${qs.toString()}`;
+
+  $('loadedKey').textContent = usingLocal ? (localModuleName || 'local') : state.styleKey;
   setSandboxState('loading…');
   $('frame').src = url;
 
-  // ping after a moment (sandbox will respond)
   setTimeout(() => {
     try { postToSandbox('DEV_PING', { at: Date.now() }); } catch {}
   }, 300);
 }
+
 
 function sendSnapOnce() {
   const total = Number($('totalHype').value) || 0;
@@ -141,6 +170,44 @@ function stopOscillate() {
 }
 
 function wireUI() {
+    $('localFile').addEventListener('change', async (ev) => {
+  const file = ev.target.files && ev.target.files[0];
+  if (!file) return;
+
+  try {
+    revokeLocalModule();
+
+    // Basic sanity: only JS-ish files
+    const name = file.name || 'localOverlay.js';
+    localModuleName = name;
+
+    // Create a blob URL. This is NOT uploading — it stays local in browser memory.
+    const blob = new Blob([await file.text()], { type: 'text/javascript' });
+    localModuleUrl = URL.createObjectURL(blob);
+
+    // Show in UI
+    $('styleKey').value = '';
+    $('loadedKey').textContent = name;
+
+    // Load immediately
+    const cfg = currentConfigFromTextarea();
+    if (cfg === null) return showStatus('Config JSON is invalid.', true);
+
+    $('errors').textContent = 'No errors.';
+    loadSandbox('', cfg);
+
+    showStatus(`Loaded local overlay: ${name}`);
+  } catch (e) {
+    showStatus(`Failed to load local file: ${e?.message || e}`, true);
+  }
+});
+$('btnUseServerStyle').addEventListener('click', () => {
+  // stop using local overlay
+  $('localFile').value = '';
+  revokeLocalModule();
+  showStatus('Switched back to server style key.');
+});
+
   // defaults
   $('styleKey').value = localStorage.getItem('overlayLab.styleKey') || 'crownfall';
 
@@ -185,17 +252,23 @@ function wireUI() {
   $('fbColor').addEventListener('input', () => { if ($('autoSend').checked && !$('oscillate').checked) sendSnapOnce(); });
 
   // buttons
-  $('btnLoad').addEventListener('click', () => {
-    const key = $('styleKey').value.trim();
-    const cfg = currentConfigFromTextarea();
-    if (cfg === null) return showStatus('Config JSON is invalid.', true);
+$('btnLoad').addEventListener('click', () => {
+  const cfg = currentConfigFromTextarea();
+  if (cfg === null) return showStatus('Config JSON is invalid.', true);
 
+  localStorage.setItem('overlayLab.configJson', $('configJson').value);
+
+  $('errors').textContent = 'No errors.';
+
+  // If localModuleUrl exists, ignore styleKey
+  const key = $('styleKey').value.trim();
+  if (!localModuleUrl) {
     localStorage.setItem('overlayLab.styleKey', key);
-    localStorage.setItem('overlayLab.configJson', $('configJson').value);
+  }
 
-    $('errors').textContent = 'No errors.';
-    loadSandbox(key, cfg);
-  });
+  loadSandbox(key, cfg);
+});
+
 
   $('btnHardReload').addEventListener('click', () => {
     // hard reload: reload iframe URL with ts param

@@ -1,3 +1,4 @@
+// public/dev/overlaySandbox.js
 'use strict';
 
 function normalizeStyleKey(styleKey) {
@@ -14,27 +15,8 @@ function safeDecodeConfig(b64) {
   }
 }
 
-async function loadStyle(styleKey) {
-  const key = normalizeStyleKey(styleKey);
-
-  const urls = [
-    `/public/overlays/styles/${encodeURIComponent(key)}.js`,
-    `/public/overlays/style/${encodeURIComponent(key)}.js`, // compat
-  ];
-
-  let lastErr = null;
-  for (const url of urls) {
-    try {
-      return await import(url);
-    } catch (e) {
-      lastErr = e;
-    }
-  }
-  throw lastErr || new Error(`Failed to import style: ${key}`);
-}
-
 function post(type, payload) {
-  // parent is same-origin in your tool
+  // Parent is same-origin in Overlay Lab tool
   window.parent?.postMessage({ type, ...payload }, window.location.origin);
 }
 
@@ -59,15 +41,15 @@ function makeDevApi() {
 
   function emit(snap) {
     lastSnap = snap || { factions: [] };
-    handlers.forEach((fn) => {
+    for (const fn of handlers) {
       try { fn(lastSnap); } catch {}
-    });
+    }
   }
 
   return {
     onMeters(fn) {
       handlers.add(fn);
-      // push immediately so overlays render right away
+      // Immediately push last snapshot so overlays can render ASAP
       try { fn(lastSnap); } catch {}
       return () => handlers.delete(fn);
     },
@@ -76,11 +58,41 @@ function makeDevApi() {
   };
 }
 
+async function loadStyleByKey(styleKey) {
+  const key = normalizeStyleKey(styleKey);
+
+  const urls = [
+    `/public/overlays/styles/${encodeURIComponent(key)}.js`,
+    `/public/overlays/style/${encodeURIComponent(key)}.js`, // compat fallback
+  ];
+
+  let lastErr = null;
+  for (const url of urls) {
+    try {
+      return await import(url);
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+
+  throw lastErr || new Error(`Failed to import style: ${key}`);
+}
+
+async function loadStyleByUrl(moduleUrl) {
+  // moduleUrl can be blob:... created in the parent tool (Overlay Lab)
+  // CSP must allow: script-src 'self' blob:
+  return await import(moduleUrl);
+}
+
 async function main() {
   installErrorHooks();
 
   const params = new URLSearchParams(window.location.search || '');
+
   const styleKey = params.get('styleKey') || '';
+  const moduleUrl = params.get('moduleUrl') || '';
+  const moduleName = params.get('moduleName') || '';
+
   const cfgB64 = params.get('config') || '';
   let config = safeDecodeConfig(cfgB64);
 
@@ -92,28 +104,36 @@ async function main() {
 
   const api = makeDevApi();
 
-  // load and init overlay
-  const mod = await loadStyle(styleKey);
+  // load module (local blob URL or server styleKey)
+  let mod;
+  if (moduleUrl) mod = await loadStyleByUrl(moduleUrl);
+  else mod = await loadStyleByKey(styleKey);
+
   if (!mod || typeof mod.init !== 'function') {
-    throw new Error(`Style "${styleKey}" did not export init()`);
+    throw new Error(
+      moduleUrl
+        ? `Local module "${moduleName || 'local'}" did not export init()`
+        : `Style "${styleKey}" did not export init()`
+    );
   }
 
   let instance = null;
 
   function boot() {
     while (root.firstChild) root.removeChild(root.firstChild);
+
+    // overlays expect init({ root, config, api })
     instance = mod.init({ root, config, api }) || null;
 
-    // overlays like crownfall return { destroy, setConfig }
+    // Not required, but gives us safe reload semantics
     if (instance && typeof instance.destroy !== 'function') {
-      // not required, but helps safe reloads
       instance.destroy = () => {};
     }
   }
 
   boot();
 
-  // message bridge
+  // message bridge from parent tool
   window.addEventListener('message', (ev) => {
     if (ev.origin !== window.location.origin) return;
     const msg = ev.data || {};
@@ -132,21 +152,29 @@ async function main() {
     if (msg.type === 'DEV_SET_CONFIG') {
       config = msg.config || {};
 
-      // prefer live update, otherwise hot-reboot
+      // Prefer live update if overlay supports it
       if (instance && typeof instance.setConfig === 'function') {
-        try { instance.setConfig(config); }
-        catch (e) { post('DEV_ERROR', { message: e?.message || String(e), stack: e?.stack || '' }); }
+        try {
+          instance.setConfig(config);
+        } catch (e) {
+          post('DEV_ERROR', { message: e?.message || String(e), stack: e?.stack || '' });
+        }
       } else {
+        // Hot reboot
         try { instance?.destroy?.(); } catch {}
         boot();
-        // restore last snap after reboot
+
+        // restore last snap after reboot so overlay has state
         api._emit(api._getLast());
       }
       return;
     }
   });
 
-  post('DEV_READY', { styleKey: normalizeStyleKey(styleKey) });
+  // ready signal
+  post('DEV_READY', {
+    styleKey: moduleUrl ? (moduleName || 'local') : normalizeStyleKey(styleKey),
+  });
 }
 
 main().catch((e) => {

@@ -122,6 +122,20 @@
 
             <div class="hr"></div>
 
+            <label class="small muted">Local Overlay File (optional)</label>
+            <input id="localFile" type="file" accept=".js,.mjs,text/javascript" class="input" />
+
+            <div class="mini" style="margin-top:6px;">
+            If a file is selected, it will be loaded from your computer via a blob URL (no server upload).
+            Style Key is ignored while a local file is active.
+            </div>
+
+            <div class="pillBtnRow" style="margin-top:10px;">
+            <button id="btnUseServerStyle" class="btn">Use Server Style Key</button>
+            </div>
+
+            <div class="hr"></div>
+            
             <label class="small muted">Config (JSON)</label>
             <textarea id="configJson" rows="10" spellcheck="false" class="input mono"
               placeholder='{"fpsCap":60,"emberMax":420}'></textarea>
