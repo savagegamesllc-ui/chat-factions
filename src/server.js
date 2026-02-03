@@ -6,29 +6,7 @@ require('dotenv').config();
 const path = require('path');
 const express = require('express');
 const session = require('express-session');
-// Security headers
-app.use(helmet());
-
-// ✅ Dev-only CSP relaxation for Overlay Lab (allows import(blob:...))
-// This must be AFTER helmet() and BEFORE /public static.
-app.use(
-  '/public/dev',
-  helmet.contentSecurityPolicy({
-    useDefaults: true,
-    directives: {
-      // Keep it tight, only allow what the dev tool needs.
-      "default-src": ["'self'"],
-      "script-src": ["'self'", "blob:"],
-      // Some browsers enforce script-src-elem separately; your console mentioned fallback behavior.
-      "script-src-elem": ["'self'", "blob:"],
-      "style-src": ["'self'", "'unsafe-inline'"],
-      "img-src": ["'self'", "data:"],
-      "connect-src": ["'self'", "https:", "http:", "ws:", "wss:"],
-      "frame-src": ["'self'"],
-    },
-  })
-);
-
+const helmet = require('helmet');
 const compression = require('compression');
 
 const { config } = require('./config/env');
@@ -54,9 +32,11 @@ const { ownerStreamersRoutes } = require('./routes/ownerStreamersRoutes');
 const { startDecayLoop } = require('./services/decayLoopService');
 
 const { wikiRoutes } = require('./routes/wikiRoutes');
+
 const app = express();
 
 startDecayLoop({ intervalMs: 15000 });
+
 // Trust proxy if later deployed behind reverse proxy
 app.set('trust proxy', 1);
 
@@ -64,8 +44,36 @@ app.set('trust proxy', 1);
 app.set('views', path.join(__dirname, 'views'));
 app.set('view engine', 'ejs');
 
-// Security headers
+// Security headers (global)
 app.use(helmet());
+
+/**
+ * ✅ Dev-only CSP relaxation for Overlay Lab
+ * Needed so overlaySandbox can `import(blob:...)` for uploaded local overlay testing.
+ *
+ * Why: a CSP HTTP header overrides <meta http-equiv="Content-Security-Policy">.
+ * This scope keeps the rest of the site locked down.
+ *
+ * IMPORTANT: This must be mounted BEFORE the /public static middleware,
+ * so it applies to /public/dev/* responses.
+ */
+app.use(
+  '/public/dev',
+  helmet.contentSecurityPolicy({
+    useDefaults: true,
+    directives: {
+      "default-src": ["'self'"],
+      "script-src": ["'self'", "blob:"],
+      // Your console note is exactly about this:
+      // if script-src-elem is not set, browsers fall back to script-src.
+      "script-src-elem": ["'self'", "blob:"],
+      "style-src": ["'self'", "'unsafe-inline'"],
+      "img-src": ["'self'", "data:"],
+      "connect-src": ["'self'", "https:", "http:", "ws:", "wss:"],
+      "frame-src": ["'self'"],
+    },
+  })
+);
 
 // IMPORTANT: Skip compression for SSE endpoints.
 // Otherwise EventSource often "hangs"/buffers and looks like a spinning request.
@@ -98,9 +106,11 @@ app.use(
  * so the webhook route can read the raw body and verify signatures.
  */
 app.use(webhookRoutes);
+
 // IMPORTANT: EventSub requires raw body for signature verification.
 // This route MUST be mounted before express.json()
 app.use(eventSubRoutes({ env: process.env }));
+
 // Parsers (normal routes)
 app.use(express.urlencoded({ extended: false }));
 app.use(express.json());
@@ -152,7 +162,6 @@ app.use(overlayRoutes);
 app.use(billingRoutes);
 
 // Realtime + meters + chat
-
 app.use(meterRoutes);
 app.use(chatRoutes);
 app.use(chatConfigRoutes);
@@ -161,7 +170,6 @@ app.use(chatConfigRoutes);
 app.use(eventKeyRoutes);
 app.use(eventApiPageRoutes);
 app.use(ownerStreamersRoutes);
-
 
 // 404
 app.use((req, res) => {
@@ -173,6 +181,4 @@ app.use(errorHandler);
 
 app.listen(config.port, () => {
   console.log(`[server] listening on ${config.appBaseUrl}`);
-
-
 });
