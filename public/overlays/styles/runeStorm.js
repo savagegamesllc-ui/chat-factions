@@ -1,10 +1,14 @@
 // public/overlays/styles/runeStorm.js
 // PRO Overlay: RuneStorm (Arcane perimeter + sparks) — HYPE-AMPLIFIED
-// - MUST export meta + init() (compat)
-// - Defensive: if canvas is missing, create one under #overlayRoot
-// - FIX: accepts meters as object-map OR array OR wrapper { meters: [...] }
-// - FIX: uses normalized hype01 (0..1) so "max hype" produces BIG growth
-// - BIG MOMENT: thickness, glow, rune alpha, bloom, spark rate/size/speed scale hard with hype
+// Contract:
+// - MUST export meta + init()
+// - Modern runtime: init({ root, config, api }) where api.onMeters((snap)=>...) is available
+// - Legacy runtime: createStyle({ canvas, app, config }) with app.on('meters'|'state'|'factions')
+//
+// Notes:
+// - Defensive: if canvas is missing, create one under provided root (or #overlayRoot)
+// - Supports meters as object-map OR array OR wrapper { meters: [...] }
+// - Uses normalized hype01 (0..1) so "max hype" produces BIG growth
 
 'use strict';
 
@@ -33,7 +37,7 @@ export const meta = {
     sparkSize: 2.2,               // px (base) — scales with hype
     sparkLife: 0.9,               // sec
 
-    // NEW: hype scaling (this is what makes it feel PRO at max hype)
+    // Hype scaling
     hypeCurve: 1.35,              // 0.6..2.2 (higher = ramps harder near top)
     hypeScale: 180,               // soft-normalize constant (lower = hits max hype sooner)
     maxThicknessBoost: 2.25,      // 1..3.5 multiplier at max hype
@@ -71,8 +75,20 @@ export const meta = {
 function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
 function clamp01(v) { return clamp(v, 0, 1); }
 function rand() { return Math.random(); }
-function lerp(a, b, t) { return a + (b - a) * t; }
-function frac(x) { return x - Math.floor(x); }
+function mixRgb(colors) {
+  let tw = 0;
+  let r = 0, g = 0, b = 0;
+  for (const c of colors) {
+    const w = c.w || 0;
+    if (w <= 0) continue;
+    tw += w;
+    r += c.rgb.r * w;
+    g += c.rgb.g * w;
+    b += c.rgb.b * w;
+  }
+  if (tw <= 0) return { r: 120, g: 200, b: 255 };
+  return { r: r / tw, g: g / tw, b: b / tw };
+}
 
 function hexToRgb(hex) {
   const s = String(hex || '').trim().replace('#', '');
@@ -93,21 +109,6 @@ function hexToRgb(hex) {
 
 function rgbToCss({ r, g, b }, a = 1) {
   return `rgba(${Math.round(r)}, ${Math.round(g)}, ${Math.round(b)}, ${a})`;
-}
-
-function mixRgb(colors) {
-  let tw = 0;
-  let r = 0, g = 0, b = 0;
-  for (const c of colors) {
-    const w = c.w || 0;
-    if (w <= 0) continue;
-    tw += w;
-    r += c.rgb.r * w;
-    g += c.rgb.g * w;
-    b += c.rgb.b * w;
-  }
-  if (tw <= 0) return { r: 120, g: 200, b: 255 };
-  return { r: r / tw, g: g / tw, b: b / tw };
 }
 
 function pickEdgePoint(w, h, pad, placement) {
@@ -134,19 +135,6 @@ function pickEdgePoint(w, h, pad, placement) {
 }
 
 /* ================= Canvas attachment ================= */
-function ensureCanvas(existing) {
-  if (existing && typeof existing.getContext === 'function') {
-    styleCanvas(existing);
-    return { canvas: existing, created: false };
-  }
-  const root = document.getElementById('overlayRoot') || document.body;
-  const c = document.createElement('canvas');
-  c.dataset.style = 'runeStorm';
-  styleCanvas(c);
-  root.appendChild(c);
-  return { canvas: c, created: true };
-}
-
 function styleCanvas(c) {
   c.style.position = 'absolute';
   c.style.left = '0';
@@ -155,6 +143,23 @@ function styleCanvas(c) {
   c.style.height = '100%';
   c.style.pointerEvents = 'none';
   c.style.display = 'block';
+}
+
+function ensureCanvas(existing, rootEl) {
+  if (existing && typeof existing.getContext === 'function') {
+    styleCanvas(existing);
+    return { canvas: existing, created: false };
+  }
+  const root =
+    rootEl ||
+    document.getElementById('overlayRoot') ||
+    document.body;
+
+  const c = document.createElement('canvas');
+  c.dataset.style = 'runeStorm';
+  styleCanvas(c);
+  root.appendChild(c);
+  return { canvas: c, created: true };
 }
 
 function resizeCanvasToDisplaySize(canvas) {
@@ -169,7 +174,7 @@ function resizeCanvasToDisplaySize(canvas) {
   return dpr;
 }
 
-/* ================= Meter coercion (BIG FIX) ================= */
+/* ================= Meter coercion (legacy support) ================= */
 function coerceMetersToMap(mLike) {
   // Returns { map: { [key]: number }, sum: number }
   const out = Object.create(null);
@@ -183,7 +188,9 @@ function coerceMetersToMap(mLike) {
   // already a map
   if (!Array.isArray(mLike) && typeof mLike === 'object') {
     for (const [k, v] of Object.entries(mLike)) {
-      const n = (typeof v === 'object' && v) ? (Number(v.value ?? v.hype ?? v.meter ?? 0) || 0) : (Number(v) || 0);
+      const n = (typeof v === 'object' && v)
+        ? (Number(v.value ?? v.hype ?? v.meter ?? 0) || 0)
+        : (Number(v) || 0);
       const vv = Math.max(0, n);
       out[k] = vv;
       sum += vv;
@@ -207,12 +214,11 @@ function coerceMetersToMap(mLike) {
 }
 
 /* ================= Style ================= */
-export function createStyle({ canvas, app, config } = {}) {
-  const resolved = ensureCanvas(canvas);
+export function createStyle({ canvas, root, api, app, config } = {}) {
+  const resolved = ensureCanvas(canvas, root);
   canvas = resolved.canvas;
 
   const ctx = canvas.getContext('2d', { alpha: true });
-
   let cfg = { ...meta.defaultConfig, ...(config || {}) };
 
   let factions = [];          // [{id|key,colorHex,isActive}]
@@ -225,6 +231,36 @@ export function createStyle({ canvas, app, config } = {}) {
   let flash = 0;
 
   const sparks = []; // {x,y,vx,vy,t,life,size,rgb}
+  let unsubMeters = null;
+
+  function applySnap(snap) {
+    const arr = Array.isArray(snap?.factions) ? snap.factions : [];
+
+    // sum hype = sum of meters
+    let total = 0;
+    for (const f of arr) total += Math.max(0, Number(f?.meter ?? 0) || 0);
+    sumHype = total;
+
+    // factions for computeColor()
+    factions = arr.map((f, i) => {
+      const key = String(f?.key ?? f?.id ?? i);
+      return {
+        key,
+        id: key,
+        colorHex: f?.colorHex || cfg.defaultColor,
+        isActive: true
+      };
+    });
+
+    // meters map keyed by faction key/id
+    const mm = Object.create(null);
+    for (const f of arr) {
+      const k = String(f?.key ?? f?.id ?? '');
+      if (!k) continue;
+      mm[k] = Math.max(0, Number(f?.meter ?? 0) || 0);
+    }
+    metersMap = mm;
+  }
 
   function readAppState() {
     try {
@@ -241,7 +277,14 @@ export function createStyle({ canvas, app, config } = {}) {
     } catch {}
   }
 
-  // subscribe (optional)
+  // Modern runtime subscription
+  if (api && typeof api.onMeters === 'function') {
+    try {
+      unsubMeters = api.onMeters((snap) => applySnap(snap));
+    } catch {}
+  }
+
+  // Legacy runtime subscription (optional)
   if (app && typeof app.on === 'function') {
     try {
       app.on('state', (st) => {
@@ -409,7 +452,7 @@ export function createStyle({ canvas, app, config } = {}) {
 
     const phase = (timeSec * 0.35 * speed + h01 * 0.25) % 1;
 
-    // Outer aura "bloom" on the perimeter (THIS is the big PRO growth)
+    // Outer aura bloom on the perimeter
     const bloomAmt = clamp01(cfg.auraBloom || 0);
     if (bloomAmt > 0.001) {
       ctx.save();
@@ -516,7 +559,7 @@ export function createStyle({ canvas, app, config } = {}) {
       }
     }
 
-    // glow wash (subtle at idle, very present at max hype)
+    // glow wash
     if (glow > 0) {
       ctx.save();
       ctx.globalAlpha = clamp01(glow * (0.035 + 0.22 * h01 + 0.18 * flash));
@@ -576,7 +619,8 @@ export function createStyle({ canvas, app, config } = {}) {
     const hCss = canvas.height / dpr;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-    readAppState();
+    // if we have api.onMeters, applySnap already keeps state fresh; if not, read legacy app state
+    if (!unsubMeters) readAppState();
 
     // compute hype + flash
     const h01 = hype01();
@@ -600,6 +644,10 @@ export function createStyle({ canvas, app, config } = {}) {
     destroy() {
       if (raf) cancelAnimationFrame(raf);
       raf = null;
+
+      try { unsubMeters?.(); } catch {}
+      unsubMeters = null;
+
       sparks.length = 0;
 
       if (resolved.created && canvas && canvas.parentNode) {
@@ -612,7 +660,10 @@ export function createStyle({ canvas, app, config } = {}) {
   };
 }
 
-// ✅ Back-compat export
-export function init(args) {
-  return createStyle(args || {});
+// ✅ Required export for your runtime: init({ root, config, api, ... })
+export function init({ root, config, api, canvas, app } = {}) {
+  // Works in both worlds:
+  // - overlayClient provides { root, config, api }
+  // - older harness may provide { canvas, app, config }
+  return createStyle({ root, config, api, canvas, app });
 }

@@ -22,7 +22,7 @@ export const meta = {
     intensity: 1.4,             // 0..2
 
     // Overall pacing
-    baseLaunchRate: 0.35,       // rockets/sec baseline
+    baseLaunchRate: 0,       // rockets/sec baseline
     hypeLaunchBoost: 2.8,       // extra rockets/sec at high hype
     spikeSensitivity: 0.55,     // 0..1; higher = easier to trigger mega bursts
 
