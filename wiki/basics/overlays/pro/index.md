@@ -10,3 +10,4 @@ These overlays are available on the PRO tier.
 - [Hype Words Pro](/wiki/basics/overlays/pro/hypeWordsPro)
 - [RuneStorm](/wiki/basics/overlays/pro/runestorm)
 - [Saiyan Aura](/wiki/basics/overlays/pro/saiyan-aura)
+- [Watcher Veil Manifestation](/wiki/basics/overlays/pro/watcherVeilManifestation)

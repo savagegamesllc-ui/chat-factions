@@ -9,6 +9,7 @@ These overlays are available on the **FREE** tier.
 - [Flame Edge](/wiki/basics/overlays/free/flameEdge)
 - [Focus Ring](/wiki/basics/overlays/free/focusRing)
 - [Hype Words](/wiki/basics/overlays/free/hypeWords)
+- [Watcher Veil](/wiki/basics/overlays/free/watcherVeil)
 
 ## Tips
 - FREE overlays are designed to be lightweight and stable.
