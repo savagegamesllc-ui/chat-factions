@@ -46,4 +46,6 @@ As we add overlays, each one will have its own guide:
 - recommended defaults
 - performance tuning tips
 
-> Coming next: Crownfall, Constellation Drift, and more.
+## Browse by tier
+- [FREE overlays](/wiki/overlays/free)
+- [PRO overlays](/wiki/overlays/pro)
