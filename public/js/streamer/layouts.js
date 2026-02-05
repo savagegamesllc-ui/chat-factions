@@ -40,6 +40,10 @@ function isObject(v) {
   return v && typeof v === 'object' && !Array.isArray(v);
 }
 
+function isEmptyObject(v) {
+  return isObject(v) && Object.keys(v).length === 0;
+}
+
 function safeParseJson(text) {
   const raw = String(text ?? '').trim();
   if (!raw) return null;
@@ -77,6 +81,66 @@ function renderPlan(streamer) {
     </div>
     ${streamer.proOverride ? `<div class="small" style="margin-top:8px;">proOverride: <span class="mono">true</span></div>` : ''}
   `;
+}
+
+/** -------- Overlay defaultConfig loader (from overlay script) -------- */
+
+const overlayMetaCache = new Map(); // styleKey -> meta (or null)
+
+function normalizeStyleKey(styleKey) {
+  const s = String(styleKey || '').trim();
+  return s.toLowerCase().endsWith('.js') ? s.slice(0, -3) : s;
+}
+
+async function loadOverlayMeta(styleKey) {
+  const key = normalizeStyleKey(styleKey);
+  if (!key) return null;
+
+  if (overlayMetaCache.has(key)) return overlayMetaCache.get(key);
+
+  try {
+    // Cache-bust so changes to overlay scripts show up without hard refresh
+    const mod = await import(`/public/overlays/styles/${key}.js?v=${Date.now()}`);
+    const meta = (mod && mod.meta && isObject(mod.meta)) ? mod.meta : null;
+    overlayMetaCache.set(key, meta);
+    return meta;
+  } catch (e) {
+    console.warn('[layouts] Failed to import overlay style module:', key, e);
+    overlayMetaCache.set(key, null);
+    return null;
+  }
+}
+
+function getDbDefaultConfig(layout) {
+  return isObject(layout.defaultConfig) ? layout.defaultConfig : {};
+}
+
+function getDbOverrideConfig(layout) {
+  return isObject(layout.overrideConfig) ? layout.overrideConfig : null;
+}
+
+function mergeConfigs(base, over) {
+  const b = isObject(base) ? base : {};
+  const o = isObject(over) ? over : {};
+  return { ...b, ...o };
+}
+
+/**
+ * Base config preference order:
+ *  1) overlay module meta.defaultConfig
+ *  2) layout.defaultConfig (DB)
+ *  3) {}
+ */
+async function getBaseConfigForLayout(layout) {
+  const meta = await loadOverlayMeta(layout.styleKey);
+  const metaDefault = meta && isObject(meta.defaultConfig) ? meta.defaultConfig : null;
+
+  if (metaDefault && !isEmptyObject(metaDefault)) return metaDefault;
+
+  const dbDefault = getDbDefaultConfig(layout);
+  if (!isEmptyObject(dbDefault)) return dbDefault;
+
+  return {};
 }
 
 /** -------- Slot UI -------- */
@@ -133,7 +197,7 @@ function ensureSlotPicker(streamer) {
 
     // Choose the layout selected for this slot (if any) to edit
     const l = findSelectedForSlot(activeSlot);
-    if (l) loadOverridePane(l);
+    if (l) loadOverridePane(l).catch(err => console.warn(err));
   });
 }
 
@@ -165,12 +229,6 @@ function findSelectedForSlot(slotNum) {
     if (hit) return hit;
   }
   return null;
-}
-
-function effectiveConfig(layout) {
-  const base = isObject(layout.defaultConfig) ? layout.defaultConfig : {};
-  const over = isObject(layout.overrideConfig) ? layout.overrideConfig : {};
-  return { ...base, ...over };
 }
 
 function layoutCardHtml(l) {
@@ -242,19 +300,30 @@ function layoutCardHtml(l) {
   `;
 }
 
-function loadOverridePane(layout) {
+async function loadOverridePane(layout) {
   activeLayoutId = layout.id;
 
-  const over = isObject(layout.overrideConfig) ? layout.overrideConfig : null;
-  overrideJsonEl.value = over ? JSON.stringify(over, null, 2) : '';
+  // If an override exists, edit that.
+  // Otherwise, prefill with overlay meta.defaultConfig (preferred) so users aren't staring at {}.
+  const over = getDbOverrideConfig(layout);
+  const base = await getBaseConfigForLayout(layout);
+
+  const editorObj = over ? over : base;
+  overrideJsonEl.value = JSON.stringify(editorObj || {}, null, 2);
+
+  // Build the value shown in StyleControls:
+  // base comes from overlay meta.defaultConfig (or DB default), then override if present.
+  const effective = mergeConfigs(base, over);
 
   if (StyleControls && typeof StyleControls.mount === 'function') {
     try {
       StyleControls.mount({
         styleKey: layout.styleKey,
         containerId: 'styleControls',
-        value: effectiveConfig(layout),
+        value: effective,
         onChange: (newObj) => {
+          // What we save is overrideConfig text. Since the user is editing a "template" when none existed,
+          // this becomes the override going forward (intentionally).
           overrideJsonEl.value = JSON.stringify(newObj || {}, null, 2);
         }
       });
@@ -289,7 +358,7 @@ async function refresh() {
   const anySelected = cached.layouts.find(l => l.selectedSlot != null) || cached.layouts.find(l => l.isSelected);
   const fallback = selectedForSlot || anySelected || cached.layouts.find(l => l.isEnabled) || cached.layouts[0] || null;
 
-  if (fallback) loadOverridePane(fallback);
+  if (fallback) await loadOverridePane(fallback);
 
   wireEvents();
 }
@@ -340,13 +409,19 @@ function wireEvents() {
 
   // Edit Config
   layoutsEl.querySelectorAll('[data-edit]').forEach(btn => {
-    btn.addEventListener('click', () => {
+    btn.addEventListener('click', async () => {
       const id = btn.getAttribute('data-edit');
       const l = findLayout(id);
       if (!l) return;
-      loadOverridePane(l);
-      showStatus(`Editing overrideConfig for "${l.name}".`, 'ok');
-      window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+
+      try {
+        await loadOverridePane(l);
+        showStatus(`Editing overrideConfig for "${l.name}".`, 'ok');
+        window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+      } catch (err) {
+        console.warn(err);
+        showStatus('Failed to load defaultConfig from overlay script.', 'error');
+      }
     });
   });
 
