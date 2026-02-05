@@ -1,16 +1,15 @@
 // public/overlays/styles/crownfall.js
-// PRO Overlay: Crownfall (Top-Center Spectral Crown + Prismatic Ember Rain)
+// PRO Overlay: Crownfall (Top-Center Spectral Crown + Ember/Spark Fall)
 //
 // Contract:
 //   export const meta
 //   export function init({ root, config, api })
 //
-// Updates in this version:
-// - Crown looks more 3D: metallic fill, bevel highlight, inner shading + cast shadow
-// - Better full-hype performance:
-//   - NO per-frame getBoundingClientRect() resize (resize only when needed)
-//   - Cached Path2D for crown geometry
-//   - Bloom/blur clamps + auto-throttle extra glow passes when particle count is high
+// Refresh in this version (per request):
+// - Single crown only (remove chroma-split multi-draw that looked like 3 triangle sets)
+// - Crown grows with hype (subtle scale-up)
+// - Falling sparks shift to the color of the faction with the highest hype (winner color)
+// - Keeps existing performance optimizations & clamps
 
 'use strict';
 
@@ -27,74 +26,74 @@ export const meta = {
     intensity: 1.0,                // 0..2
 
     // Hype mapping
-    hypeK: 160,                    // reacts by ~50–100 total, huge by ~300–500
-    maxTotalClamp: 2200,           // safety clamp
-    hypeSmoothing: 0.18,           // 0.05..0.5 higher = snappier
+    hypeK: 160,
+    maxTotalClamp: 2200,
+    hypeSmoothing: 0.18,
 
     // Performance
-    fpsCap: 60,                    // 15..60
-    crownRenderScale: 0.55,        // 0.25..1 (offscreen crown canvas scale)
-    emberMax: 420,                 // particle cap (primary perf knob)
-    emberSpawnCapPerFrame: 90,     // hard safety cap
+    fpsCap: 60,
+    crownRenderScale: 0.55,
+    emberMax: 420,
+    emberSpawnCapPerFrame: 90,
 
     // Crown layout (top-center)
-    crownX: 0.5,                   // 0..1
-    crownY: 0.115,                 // 0..1
-    crownWidth: 0.56,              // 0.2..0.9 (fraction of screen width)
-    crownHeight: 0.18,             // 0.08..0.35 (fraction of screen height)
-    crownTilt: 0.0,                // -0.2..0.2 (small)
-    crownOpacity: 0.16,            // base visibility
-    crownGlow: 0.92,               // 0..1
-    crownLineWidth: 3.5,           // px outline
-    crownGemCount: 5,              // 3..9
+    crownX: 0.5,
+    crownY: 0.115,
+    crownWidth: 0.56,
+    crownHeight: 0.18,
+    crownTilt: 0.0,
+    crownOpacity: 0.16,
+    crownGlow: 0.92,
+    crownLineWidth: 3.5,
+    crownGemCount: 5,
 
-    // NEW: 3D / shadow tuning
-    crownDepth: 1.0,               // 0..2 (bevel + shading strength)
-    crownCastShadow: 0.85,         // 0..2 (shadow under crown)
-    crownShadowSoftness: 1.0,      // 0.2..2 (blur multiplier)
-    crownShadowOffset: 1.0,        // 0..2 (offset multiplier)
+    // 3D / shadow
+    crownDepth: 1.0,
+    crownCastShadow: 0.85,
+    crownShadowSoftness: 1.0,
+    crownShadowOffset: 1.0,
 
     // Reaction tuning
-    eventBoost: 1.0,               // 0..2
-    spikeSensitivity: 0.95,        // 0..2
-    flareAttack: 9.0,              // 1..20
-    flareRelease: 2.2,             // 0.2..6
-    flareStrength: 0.9,            // 0..1
+    eventBoost: 1.0,
+    spikeSensitivity: 0.95,
+    flareAttack: 9.0,
+    flareRelease: 2.2,
+    flareStrength: 0.9,
 
     // Embers
     emberEnabled: true,
-    emberRate: 18,                 // base/sec
-    emberBoost: 150,               // additional/sec at max hype/spike
-    emberLife: 1.25,               // sec
-    emberSize: 2.6,                // px
-    emberSpeed: 420,               // px/sec
-    emberGravity: 920,             // px/sec^2
-    emberDrift: 120,               // px/sec sideways
-    emberTurbulence: 0.55,         // 0..1
-    emberGlow: 0.85,               // 0..1
-    emberAlpha: 0.55,              // 0..1
-    emberHueSpeed: 1.15,           // 0.1..3
+    emberRate: 18,
+    emberBoost: 150,
+    emberLife: 1.25,
+    emberSize: 2.6,
+    emberSpeed: 420,
+    emberGravity: 920,
+    emberDrift: 120,
+    emberTurbulence: 0.55,
+    emberGlow: 0.85,
+    emberAlpha: 0.55,
+    emberHueSpeed: 1.15,
 
     // Tier 2+ extras
     sparkEnabled: true,
-    sparkRate: 6,                  // extra sparks/sec (Tier2+)
-    sparkBoost: 35,                // extra sparks/sec (Tier3)
-    sparkSize: 1.4,                // px
-    sparkLife: 0.55,               // sec
+    sparkRate: 6,
+    sparkBoost: 35,
+    sparkSize: 1.4,
+    sparkLife: 0.55,
 
-    // Tier 3 spectacle
-    shockwaveStrength: 1.0,        // 0..2
-    lensGlowStrength: 1.0,         // 0..2 (soft halo above crown)
-    chromaSplit: 0.75,             // 0..2 (subtle RGB offset at max hype)
+    // Tier 3 spectacle (kept, but chroma split is disabled in render path to keep ONE crown)
+    shockwaveStrength: 1.0,
+    lensGlowStrength: 1.0,
+    chromaSplit: 0.75,             // still in config for compatibility; not used for multi-draw anymore
 
     // Rainbow / color
-    saturation: 0.95,              // 0..1
-    contrast: 1.05,                // 0.6..1.6
-    biasStrength: 0.24,            // 0..0.75 faction tint influence on crown
+    saturation: 0.95,
+    contrast: 1.05,
+    biasStrength: 0.24,
 
     // Screen shaping
-    backgroundDim: 0.0,            // 0..0.25
-    vignette: 0.22                 // 0..0.8
+    backgroundDim: 0.0,
+    vignette: 0.22
   },
 
   controls: [
@@ -118,7 +117,7 @@ export const meta = {
     { key: 'crownLineWidth', label: 'Crown Line Width', type: 'range', min: 1, max: 10, step: 0.1, default: 3.5 },
     { key: 'crownGemCount', label: 'Gem Count', type: 'range', min: 3, max: 9, step: 1, default: 5 },
 
-    // NEW: 3D / shadow
+    // 3D / shadow
     { key: 'crownDepth', label: 'Crown Depth', type: 'range', min: 0, max: 2, step: 0.05, default: 1.0 },
     { key: 'crownCastShadow', label: 'Cast Shadow', type: 'range', min: 0, max: 2, step: 0.05, default: 0.85 },
     { key: 'crownShadowSoftness', label: 'Shadow Softness', type: 'range', min: 0.2, max: 2, step: 0.05, default: 1.0 },
@@ -159,8 +158,11 @@ export const meta = {
     { key: 'sparkEnabled', label: 'Enable Sparks', type: 'checkbox', default: true },
     { key: 'sparkRate', label: 'Spark Rate', type: 'range', min: 0, max: 40, step: 1, default: 6 },
     { key: 'sparkBoost', label: 'Spark Boost', type: 'range', min: 0, max: 150, step: 5, default: 35 },
+
     { key: 'shockwaveStrength', label: 'Shockwave Strength', type: 'range', min: 0, max: 2, step: 0.05, default: 1.0 },
     { key: 'lensGlowStrength', label: 'Lens Glow Strength', type: 'range', min: 0, max: 2, step: 0.05, default: 1.0 },
+
+    // kept for backwards compatibility with existing saved layouts
     { key: 'chromaSplit', label: 'Chroma Split', type: 'range', min: 0, max: 2, step: 0.05, default: 0.75 },
   ],
 };
@@ -243,6 +245,18 @@ function pickWinner(colors, weights) {
   return colors[bestI] || { r: 140, g: 210, b: 255 };
 }
 
+// NEW helper: winner color (highest meter), independent of mixMode (used for sparks)
+function computeWinnerRgb(snap) {
+  const factions = (snap && Array.isArray(snap.factions)) ? snap.factions : [];
+  let best = null;
+  let bestM = -Infinity;
+  for (const f of factions) {
+    const m = Number(f?.meter) || 0;
+    if (m > bestM) { bestM = m; best = f; }
+  }
+  return best ? hexToRgb(best?.colorHex) : { r: 140, g: 210, b: 255 };
+}
+
 function computeBlendAndHype(snap, cfg) {
   const factions = (snap && Array.isArray(snap.factions)) ? snap.factions : [];
   let total = 0;
@@ -320,7 +334,6 @@ function buildCrownPaths(sw, sh, peakCount) {
 
   const toothW = sw / (peakCount + 1);
 
-  // Outline: zig-zag crown edge
   const outline = new Path2D();
   outline.moveTo(left, base);
   for (let i = 0; i <= peakCount; i++) {
@@ -332,19 +345,17 @@ function buildCrownPaths(sw, sh, peakCount) {
   }
   outline.lineTo(right, base);
 
-  // Body: a slightly thicker “plate” under the outline
   const body = new Path2D(outline);
   body.lineTo(right * 0.92, base + sh * 0.26);
   body.lineTo(left * 0.92, base + sh * 0.26);
   body.closePath();
 
-  // Crown “rim” (for bevel highlight): follow just the upper outline
   const rim = new Path2D();
   rim.moveTo(left, base);
   for (let i = 0; i <= peakCount; i++) {
     const x = left + toothW * (i + 0.5);
     const ph = (0.55 + 0.45 * Math.sin((i / peakCount) * Math.PI));
-    const yPeak = top + sh * 0.13 * ph; // slightly higher/cleaner
+    const yPeak = top + sh * 0.13 * ph;
     rim.lineTo(x, yPeak);
     rim.lineTo(x + toothW * 0.5, base);
   }
@@ -360,44 +371,39 @@ export function init({ root, config, api }) {
 
   let cfg = { ...meta.defaultConfig, ...(config || {}) };
 
-  // Offscreen crown canvas
   const crownOff = document.createElement('canvas');
   const crownCtx = crownOff.getContext('2d', { alpha: true });
 
-  // Live snap state
   let latestSnap = { factions: [] };
   let { total: totalRaw, h: hTarget, rgb: biasRgb } = computeBlendAndHype(latestSnap, cfg);
 
-  // Smoothed hype + color
+  // NEW: winner color for sparks
+  let winnerRgb = computeWinnerRgb(latestSnap);
+
   let hSmooth = 0;
   let biasSmooth = { r: 140, g: 210, b: 255 };
+  let winnerSmooth = { r: 140, g: 210, b: 255 };
 
-  // Spike / flare energy
   let lastTotal = 0;
   let spikeVel = 0;
-  let spikeEnergy = 0; // 0..1
-  let flare = 0;       // 0..1
-  let flash = 0;       // 0..1
+  let spikeEnergy = 0;
+  let flare = 0;
+  let flash = 0;
 
-  // Particles
   const embers = []; // {x,y,vx,vy,life,t,rot,vr,size,hueSeed,power,isSpark,grav}
   let emberCarry = 0;
   let sparkCarry = 0;
 
-  // Shockwave (tier 3)
   let shockT = 0;
   let shockV = 0;
 
-  // Loop control
   let raf = 0;
   let lastMs = performance.now();
   let accMs = 0;
 
-  // Size state (IMPORTANT PERF FIX: no per-frame getBoundingClientRect)
   let size = { w: 1, h: 1, dpr: 1, ow: 2, oh: 2 };
   let sizeDirty = true;
 
-  // Crown path cache state
   let crownPathKey = '';
   let crownPaths = null;
 
@@ -407,6 +413,8 @@ export function init({ root, config, api }) {
     totalRaw = res.total;
     hTarget = res.h;
     biasRgb = res.rgb;
+
+    winnerRgb = computeWinnerRgb(latestSnap);
 
     const d = Math.abs(totalRaw - lastTotal);
     lastTotal = totalRaw;
@@ -524,8 +532,8 @@ export function init({ root, config, api }) {
         life: life * (0.7 + 0.7 * Math.random()),
         t: 0,
         size: size0 * (0.75 + 0.8 * Math.random()) * (0.85 + 0.8 * hSmooth),
-        rot: Math.random() * Math.PI * 2,
-        vr: (Math.random() - 0.5) * 18,
+        rot: 0,                       // sparks are streaks now; rotation not needed
+        vr: 0,
         hueSeed: Math.random(),
         power: clamp01(0.35 + 0.65 * hSmooth),
         isSpark: true,
@@ -547,7 +555,6 @@ export function init({ root, config, api }) {
       e.vy += e.grav * dt;
       e.x += e.vx * dt;
       e.y += e.vy * dt;
-      e.rot += e.vr * dt;
 
       e.vx *= Math.pow(0.35, dt);
       e.vy *= Math.pow(0.82, dt);
@@ -556,7 +563,7 @@ export function init({ root, config, api }) {
     }
   }
 
-  function drawParticles(ctx, t, biasRgb) {
+  function drawParticles(ctx, t, biasRgb, winnerRgb) {
     if (!cfg.emberEnabled) return;
 
     const glow = clamp01(cfg.emberGlow);
@@ -568,9 +575,8 @@ export function init({ root, config, api }) {
     ctx.save();
     ctx.globalCompositeOperation = (tier >= 2) ? 'lighter' : 'source-over';
 
-    // Full-hype optimization: cap blur when we have a lot of particles
     const particlePressure = clamp01(embers.length / Math.max(1, clampInt(cfg.emberMax, 1, 20000)));
-    const blurCap = lerp(1.0, 0.55, particlePressure); // more particles => less blur
+    const blurCap = lerp(1.0, 0.55, particlePressure);
     ctx.shadowColor = 'rgba(255,255,255,0.9)';
     ctx.shadowBlur = (6 + 70 * glow) * (0.20 + 1.20 * hSmooth) * (0.7 + 0.6 * flare) * blurCap;
 
@@ -582,6 +588,39 @@ export function init({ root, config, api }) {
       const fade = (1 - p);
       const a = alphaBase * fade * (0.25 + 0.85 * e.power) * (0.45 + 0.95 * hSmooth + 0.35 * flare);
 
+      if (e.isSpark) {
+        // Sparks: shift toward WINNER color (highest hype)
+        const wr = winnerRgb.r, wg = winnerRgb.g, wb2 = winnerRgb.b;
+        const coreA = a * (0.85 + 0.45 * flare);
+
+        // simple falling streak (no triangles)
+        const len = e.size * lerp(9, 20, hSmooth);
+        const wth = Math.max(1.0, e.size * 0.55);
+
+        ctx.save();
+        ctx.translate(e.x, e.y);
+        ctx.globalAlpha = coreA;
+
+        ctx.strokeStyle = `rgba(${wr|0},${wg|0},${wb2|0},${coreA})`;
+        ctx.lineWidth = wth;
+        ctx.beginPath();
+        ctx.moveTo(0, -len * 0.65);
+        ctx.lineTo(0, len * 0.65);
+        ctx.stroke();
+
+        // hot core
+        ctx.strokeStyle = `rgba(255,255,255,${coreA * 0.55})`;
+        ctx.lineWidth = Math.max(1, wth * 0.45);
+        ctx.beginPath();
+        ctx.moveTo(0, -len * 0.35);
+        ctx.lineTo(0, len * 0.35);
+        ctx.stroke();
+
+        ctx.restore();
+        continue;
+      }
+
+      // Embers: keep prismatic identity, lightly biased
       const hue = frac(e.hueSeed + t * 0.12 * hueSpeed * lerp(0.85, 1.35, hSmooth) + p * 0.25);
       let rgb = hsvToRgb(hue, sat, 1);
 
@@ -591,37 +630,23 @@ export function init({ root, config, api }) {
 
       const rr = (rgb.r * 255) | 0, gg = (rgb.g * 255) | 0, bb2 = (rgb.b * 255) | 0;
 
+      const sz = e.size;
       ctx.save();
       ctx.translate(e.x, e.y);
-      ctx.rotate(e.rot);
+      ctx.globalAlpha = a;
 
-      if (e.isSpark) {
-        const sz = e.size;
-        ctx.fillStyle = `rgba(${rr},${gg},${bb2},${a})`;
-        ctx.beginPath();
-        ctx.moveTo(-sz * 0.2, -sz * 2.0);
-        ctx.lineTo(sz * 0.25, -sz * 0.4);
-        ctx.lineTo(sz * 0.2, sz * 2.0);
-        ctx.lineTo(-sz * 0.35, sz * 0.4);
-        ctx.closePath();
-        ctx.fill();
+      // diamond ember (kept)
+      ctx.fillStyle = `rgba(${rr},${gg},${bb2},${a})`;
+      ctx.beginPath();
+      ctx.moveTo(-sz * 0.35, -sz * 1.15);
+      ctx.lineTo(sz * 0.75, -sz * 0.25);
+      ctx.lineTo(sz * 0.35, sz * 1.15);
+      ctx.lineTo(-sz * 0.85, sz * 0.25);
+      ctx.closePath();
+      ctx.fill();
 
-        ctx.fillStyle = `rgba(255,255,255,${a * 0.35})`;
-        ctx.fillRect(-sz * 0.06, -sz * 1.6, sz * 0.12, sz * 3.2);
-      } else {
-        const sz = e.size;
-        ctx.fillStyle = `rgba(${rr},${gg},${bb2},${a})`;
-        ctx.beginPath();
-        ctx.moveTo(-sz * 0.35, -sz * 1.15);
-        ctx.lineTo(sz * 0.75, -sz * 0.25);
-        ctx.lineTo(sz * 0.35, sz * 1.15);
-        ctx.lineTo(-sz * 0.85, sz * 0.25);
-        ctx.closePath();
-        ctx.fill();
-
-        ctx.fillStyle = `rgba(255,255,255,${a * lerp(0.24, 0.42, hSmooth)})`;
-        ctx.fillRect(-sz * 0.08, -sz * 0.95, sz * 0.16, sz * 1.9);
-      }
+      ctx.fillStyle = `rgba(255,255,255,${a * lerp(0.24, 0.42, hSmooth)})`;
+      ctx.fillRect(-sz * 0.08, -sz * 0.95, sz * 0.16, sz * 1.9);
 
       ctx.restore();
     }
@@ -638,7 +663,6 @@ export function init({ root, config, api }) {
     const glow = clamp01(cfg.crownGlow);
     const baseA = clamp01(cfg.crownOpacity);
 
-    // Map main-canvas crown rect into offscreen
     const sx = crown.cx / crown.wScreen * ow;
     const sy = crown.cy / crown.hScreen * oh;
     const sw = crown.w / crown.wScreen * ow;
@@ -651,26 +675,23 @@ export function init({ root, config, api }) {
       crownPaths = buildCrownPaths(sw, sh, peaks);
     }
 
-    // Faction bias tint (subtle)
     const bias = clamp(cfg.biasStrength, 0, 1);
     const br = biasRgb.r / 255, bg = biasRgb.g / 255, bb = biasRgb.b / 255;
 
-    // Rainbow sweep for sheen
     const hueBase = frac(t * lerp(0.08, 0.16, hSmooth));
 
     ictx.save();
     ictx.translate(sx, sy);
     ictx.rotate(cfg.crownTilt || 0);
 
-    // 1) Cast shadow (3D): draw body path offset & blurred
+    // shadow
     const cast = clamp(cfg.crownCastShadow ?? 0.85, 0, 2);
     const depth = clamp(cfg.crownDepth ?? 1.0, 0, 2);
     if (cast > 0.001) {
       const off = (1.2 + 6.0 * depth) * clamp(cfg.crownShadowOffset ?? 1.0, 0, 2) * (0.55 + 0.65 * hSmooth);
       const soft = clamp(cfg.crownShadowSoftness ?? 1.0, 0.2, 2);
-      const maxBlur = 26; // hard cap for OBS sanity
+      const maxBlur = 26;
       ictx.save();
-      ictx.globalCompositeOperation = 'source-over';
       ictx.globalAlpha = (0.18 + 0.22 * cast) * (0.6 + 0.55 * energy);
       ictx.shadowColor = 'rgba(0,0,0,0.85)';
       ictx.shadowBlur = Math.min(maxBlur, (10 + 20 * cast) * soft * (0.6 + 0.7 * hSmooth));
@@ -681,28 +702,24 @@ export function init({ root, config, api }) {
       ictx.restore();
     }
 
-    // 2) Metallic body fill (3D): gradient + subtle rim light
+    // metallic body
     const bodyA = baseA * lerp(0.35, 0.78, smoothstep01(hSmooth)) * (0.35 + 0.65 * energy);
     const bodyGrad = ictx.createLinearGradient(0, crownPaths.top, 0, crownPaths.base + sh * 0.28);
 
-    // Tint the metal slightly toward faction at higher hype
     const tint = lerp(0.08, 0.22, hSmooth) * bias;
     const tr = lerp(1.0, br, tint);
     const tg = lerp(1.0, bg, tint);
     const tb = lerp(1.0, bb, tint);
 
-    // Dark-to-light-to-dark metal banding
     bodyGrad.addColorStop(0.00, `rgba(${(20 * tr) | 0},${(24 * tg) | 0},${(30 * tb) | 0},${bodyA * (0.70 + 0.20 * depth)})`);
     bodyGrad.addColorStop(0.28, `rgba(${(70 * tr) | 0},${(78 * tg) | 0},${(92 * tb) | 0},${bodyA * (0.55 + 0.30 * depth)})`);
     bodyGrad.addColorStop(0.58, `rgba(${(26 * tr) | 0},${(30 * tg) | 0},${(40 * tb) | 0},${bodyA * (0.65 + 0.22 * depth)})`);
     bodyGrad.addColorStop(1.00, `rgba(0,0,0,${bodyA * (0.75 + 0.20 * depth)})`);
 
     ictx.save();
-    ictx.globalCompositeOperation = 'source-over';
     ictx.fillStyle = bodyGrad;
     ictx.fill(crownPaths.body);
 
-    // Inner shading (cheap bevel): darken lower interior
     if (depth > 0.001) {
       ictx.save();
       ictx.globalCompositeOperation = 'source-atop';
@@ -714,7 +731,6 @@ export function init({ root, config, api }) {
       ictx.restore();
     }
 
-    // Bevel highlight along rim
     if (depth > 0.001) {
       ictx.save();
       ictx.globalCompositeOperation = 'lighter';
@@ -729,14 +745,13 @@ export function init({ root, config, api }) {
 
     ictx.restore();
 
-    // 3) Glow stroke (rainbow) — still the “spectral” identity
+    // spectral outline
     ictx.save();
     ictx.globalCompositeOperation = 'lighter';
 
-    // Full-hype optimization: clamp shadow blur when particle pressure is high
     const pressure = clamp01(embers.length / Math.max(1, clampInt(cfg.emberMax, 1, 20000)));
     const blurScale = lerp(1.0, 0.55, pressure);
-    const maxGlowBlur = 80; // hard cap
+    const maxGlowBlur = 80;
     ictx.shadowColor = 'rgba(255,255,255,0.9)';
     ictx.shadowBlur = Math.min(
       maxGlowBlur,
@@ -764,7 +779,7 @@ export function init({ root, config, api }) {
     ictx.lineWidth = lw;
     ictx.stroke(crownPaths.outline);
 
-    // Gems
+    // gems
     const gemY = crownPaths.base - sh * 0.07;
     for (let i = 0; i < peaks; i++) {
       const gx = crownPaths.left + crownPaths.toothW * (i + 1);
@@ -783,7 +798,6 @@ export function init({ root, config, api }) {
       ictx.fill();
     }
 
-    // Tier 3: lens glow halo
     if (tier === 3 && (cfg.lensGlowStrength ?? 1) > 0) {
       const ls = clamp(cfg.lensGlowStrength, 0, 2);
       const haloA = clamp01(0.10 + 0.22 * flare + 0.16 * hSmooth) * ls;
@@ -801,7 +815,6 @@ export function init({ root, config, api }) {
   }
 
   function compositeCrown(ctx, w, h) {
-    const tier = tierFromH(hSmooth);
     const energy = clamp01(0.12 + 0.88 * hSmooth + 0.85 * flare + 0.55 * flash);
     const glow = clamp01(cfg.crownGlow);
 
@@ -812,9 +825,10 @@ export function init({ root, config, api }) {
     const op = clamp01(cfg.crownOpacity + 0.18 * hSmooth + 0.28 * flare) * clamp01(0.75 + 0.35 * cfg.intensity);
     ctx.globalAlpha = op;
 
+    // Single crown draw
     ctx.drawImage(crownOff, 0, 0, w, h);
 
-    // Full-hype optimization: fewer bloom passes if particle pressure is high
+    // One bloom pass only (keeps “big moment” without multi-copies)
     const pressure = clamp01(embers.length / Math.max(1, clampInt(cfg.emberMax, 1, 20000)));
     const bloomThrottle = lerp(1.0, 0.55, pressure);
 
@@ -829,20 +843,6 @@ export function init({ root, config, api }) {
       );
       ctx.drawImage(crownOff, 0, 0, w, h);
       ctx.shadowBlur = 0;
-    }
-
-    // Tier 3: chroma split (limit intensity under pressure)
-    const csBase = clamp(cfg.chromaSplit ?? 0.75, 0, 2) * (tier === 3 ? lerp(0.2, 1.0, (hSmooth - 0.7) / 0.3) : 0);
-    const cs = csBase * lerp(1.0, 0.6, pressure);
-    if (cs > 0.001) {
-      ctx.save();
-      ctx.globalCompositeOperation = 'lighter';
-      ctx.globalAlpha = op * 0.18;
-      const ox = Math.sin(performance.now() * 0.002) * cs * 2.0;
-      const oy = Math.cos(performance.now() * 0.0017) * cs * 1.4;
-      ctx.drawImage(crownOff, ox, 0, w, h);
-      ctx.drawImage(crownOff, -ox * 0.7, oy, w, h);
-      ctx.restore();
     }
 
     ctx.restore();
@@ -902,22 +902,22 @@ export function init({ root, config, api }) {
     const dt = Math.min(0.05, accMs / 1000);
     accMs = 0;
 
-    // Smooth h
     const smooth = clamp(cfg.hypeSmoothing ?? 0.18, 0.05, 0.5);
     hSmooth = lerp(hSmooth, hTarget, 1 - Math.exp(-(1 / smooth) * dt));
     hSmooth = clamp01(hSmooth * clamp(cfg.intensity, 0, 2));
 
-    // Smooth color
     biasSmooth.r = lerp(biasSmooth.r, biasRgb.r, 1 - Math.exp(-8 * dt));
     biasSmooth.g = lerp(biasSmooth.g, biasRgb.g, 1 - Math.exp(-8 * dt));
     biasSmooth.b = lerp(biasSmooth.b, biasRgb.b, 1 - Math.exp(-8 * dt));
 
-    // Spike energy
+    winnerSmooth.r = lerp(winnerSmooth.r, winnerRgb.r, 1 - Math.exp(-10 * dt));
+    winnerSmooth.g = lerp(winnerSmooth.g, winnerRgb.g, 1 - Math.exp(-10 * dt));
+    winnerSmooth.b = lerp(winnerSmooth.b, winnerRgb.b, 1 - Math.exp(-10 * dt));
+
     spikeVel *= Math.pow(0.12, dt);
     spikeEnergy = clamp01(spikeEnergy * Math.pow(0.40, dt) + spikeVel * 0.60);
     spikeVel *= Math.pow(0.65, dt);
 
-    // Flare dynamics
     const atk = clamp(cfg.flareAttack, 0.1, 60);
     const rel = clamp(cfg.flareRelease, 0.05, 60);
     const target = clamp01(0.06 + 0.70 * hSmooth + 0.95 * spikeEnergy) * clamp01(cfg.flareStrength);
@@ -928,7 +928,6 @@ export function init({ root, config, api }) {
 
     if (spikeEnergy > 0.72 && hSmooth > 0.72) kickShock();
 
-    // Resize only when needed
     applyResizeIfNeeded();
     const { w, h, ow, oh } = size;
     const t = nowMs / 1000;
@@ -944,13 +943,16 @@ export function init({ root, config, api }) {
       ctx.restore();
     }
 
+    // Crown grows with hype (subtle, avoids blowing up the UI)
+    const grow = 0.88 + 0.18 * smoothstep01(hSmooth); // ~0.88 -> ~1.06
+
     const crown = {
       wScreen: w,
       hScreen: h,
       cx: (clamp(cfg.crownX, 0, 1) * w),
       cy: (clamp(cfg.crownY, 0, 1) * h),
-      w: clamp(cfg.crownWidth, 0.1, 1) * w,
-      h: clamp(cfg.crownHeight, 0.05, 0.7) * h
+      w: clamp(cfg.crownWidth, 0.1, 1) * w * grow,
+      h: clamp(cfg.crownHeight, 0.05, 0.7) * h * grow
     };
 
     const tier = tierFromH(hSmooth);
@@ -971,7 +973,7 @@ export function init({ root, config, api }) {
     spawnEmbers(dt, crown, t);
     spawnSparks(dt, crown, t);
     stepParticles(dt, w, h, t);
-    drawParticles(ctx, t, biasSmooth);
+    drawParticles(ctx, t, biasSmooth, winnerSmooth);
 
     const vig = clamp(cfg.vignette, 0, 0.9) * lerp(0.8, 1.15, smoothstep01(hSmooth));
     if (vig > 0.001) drawVignette(ctx, w, h, vig);
@@ -983,8 +985,8 @@ export function init({ root, config, api }) {
     totalRaw = res.total;
     hTarget = res.h;
     biasRgb = res.rgb;
+    winnerRgb = computeWinnerRgb(latestSnap);
 
-    // If render scale changed, we need a resize refresh
     sizeDirty = true;
   }
 
@@ -996,7 +998,6 @@ export function init({ root, config, api }) {
     while (root.firstChild) root.removeChild(root.firstChild);
   }
 
-  // start
   sizeDirty = true;
   applyResizeIfNeeded();
   raf = requestAnimationFrame(loop);

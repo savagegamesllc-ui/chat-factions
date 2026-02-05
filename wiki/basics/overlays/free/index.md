@@ -7,7 +7,7 @@ These overlays are available on the **FREE** tier.
 - [Constellation Drift](/wiki/basics/overlays/free/constellationDrift)
 - [Constellation Twinkle](/wiki/basics/overlays/free/constellationTwinkle)
 - [Flame Edge](/wiki/basics/overlays/free/flameEdge)
-- [Focus Ring](/wiki/basics/overlays/free/FocusRing)
+- [Focus Ring](/wiki/basics/overlays/free/focusRing)
 - [Hype Words](/wiki/basics/overlays/free/hypeWords)
 
 ## Tips
