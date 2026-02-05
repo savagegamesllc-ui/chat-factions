@@ -3,10 +3,54 @@
   <head>
     <meta charset="utf-8" />
     <title><%= title %></title>
+    <link rel="stylesheet" href="/public/css/app.css" />
   </head>
   <body>
-    <h1>404</h1>
-    <p>Not found.</p>
-    <p><a href="/">Home</a></p>
+    <div class="container">
+      <div class="header">
+        <div class="brand">
+          <div class="brand-dot"></div>
+          <div>
+            <div class="h1">Chat Factions</div>
+            <div class="muted">Page not found</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="grid two">
+        <div class="card">
+          <div class="card-title">
+            <h2>404</h2>
+            <div class="hint">Not found</div>
+          </div>
+
+          <p class="notice">
+            That page doesn’t exist (or it was moved). If you followed a saved overlay URL, double-check the path.
+          </p>
+
+          <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:12px;">
+            <a class="btn" href="/">Go Home</a>
+            <a class="btn secondary" href="/admin">Streamer Dashboard</a>
+          </div>
+
+          <div class="small muted" style="margin-top:12px;">
+            Tip: If you’re setting up OBS, make sure you copied the full overlay URL exactly as shown in your dashboard.
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">
+            <h2>Common fixes</h2>
+            <div class="hint">Quick checks</div>
+          </div>
+
+          <ul class="small" style="margin: 0; padding-left: 18px;">
+            <li>Remove extra spaces from the URL.</li>
+            <li>Make sure you’re on the correct streamer account.</li>
+            <li>If you upgraded recently, refresh the dashboard and try again.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
   </body>
 </html>

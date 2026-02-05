@@ -49,8 +49,24 @@
       <div class="card">
         <div class="card-title">
           <h2>Layouts</h2>
-          <div class="hint">FREE always available • PRO requires upgrade</div>
+          <div class="hint">Pick a tier, then choose an overlay</div>
         </div>
+
+        <!-- Tier picker (NEW) -->
+        <div class="notice" style="margin-bottom:12px;">
+          <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+            <div>
+              <div class="small muted">Tier filter</div>
+              <div class="small">Select which tier of overlays you want to browse.</div>
+            </div>
+
+            <div id="tierPicker" style="display:flex; gap:8px; flex-wrap:wrap;">
+              <button type="button" class="btn secondary" data-tier="FREE">Free</button>
+              <button type="button" class="btn secondary" data-tier="PRO">Pro</button>
+            </div>
+          </div>
+        </div>
+
         <div id="layouts" class="muted">Loading layouts…</div>
       </div>
 
@@ -101,6 +117,82 @@
         statusEl.style.display = has ? 'block' : 'none';
       });
       if (statusEl) obs.observe(statusEl, { childList: true, characterData: true, subtree: true });
+
+      // Tier filtering (NEW)
+      (function tierFilter() {
+        const picker = document.getElementById('tierPicker');
+        const layoutsRoot = document.getElementById('layouts');
+        if (!picker || !layoutsRoot) return;
+
+        const TIERS = ["FREE", "PRO"];
+        const STORAGE_KEY = "cf_layoutTier";
+        let currentTier = (localStorage.getItem(STORAGE_KEY) || "FREE").toUpperCase();
+        if (!TIERS.includes(currentTier)) currentTier = "FREE";
+
+        function normalizeTier(t) {
+          return (t || "").toString().trim().toUpperCase();
+        }
+
+        // Tries multiple ways to detect tier on each rendered layout element
+        function getElementTier(el) {
+          if (!el || el.nodeType !== 1) return "";
+
+          // 1) explicit attribute on the layout element or a child
+          const attrTier =
+            el.getAttribute("data-tier") ||
+            (el.querySelector && el.querySelector("[data-tier]") && el.querySelector("[data-tier]").getAttribute("data-tier"));
+          if (attrTier) return normalizeTier(attrTier);
+
+          // 2) common badge/label text inside the element
+          const txt = (el.innerText || "").toUpperCase();
+          // Prefer PRO if both appear (rare but safe)
+          if (txt.includes("PRO")) return "PRO";
+          if (txt.includes("FREE")) return "FREE";
+
+          return "";
+        }
+
+        function setActiveButton(tier) {
+          const buttons = picker.querySelectorAll("button[data-tier]");
+          buttons.forEach(btn => {
+            const isActive = normalizeTier(btn.getAttribute("data-tier")) === tier;
+            btn.classList.toggle("secondary", !isActive);
+          });
+        }
+
+        function applyFilter() {
+          setActiveButton(currentTier);
+
+          // If layouts.js hasn't rendered yet, this will get called again by the observer.
+          const children = Array.from(layoutsRoot.children || []);
+          if (!children.length) return;
+
+          children.forEach(el => {
+            const t = getElementTier(el);
+            // If we can't detect tier, don't hide it (avoids accidentally hiding all)
+            const shouldShow = !t || t === currentTier;
+            el.style.display = shouldShow ? "" : "none";
+          });
+
+          // Optional: if the "Loading layouts…" text is still present
+          // we leave it alone and let layouts.js replace it.
+        }
+
+        picker.addEventListener("click", (e) => {
+          const btn = e.target.closest("button[data-tier]");
+          if (!btn) return;
+          currentTier = normalizeTier(btn.getAttribute("data-tier")) || "FREE";
+          localStorage.setItem(STORAGE_KEY, currentTier);
+          applyFilter();
+        });
+
+        // Re-apply whenever #layouts content changes (layouts.js rerenders)
+        const mo = new MutationObserver(() => applyFilter());
+        mo.observe(layoutsRoot, { childList: true, subtree: true });
+
+        // Initial apply
+        applyFilter();
+      })();
     </script>
   </body>
 </html>
