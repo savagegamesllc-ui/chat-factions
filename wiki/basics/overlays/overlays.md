@@ -47,5 +47,5 @@ As we add overlays, each one will have its own guide:
 - performance tuning tips
 
 ## Browse by tier
-- [FREE overlays](/wiki/overlays/free)
-- [PRO overlays](/wiki/overlays/pro)
+- [FREE overlays](/wiki/overlays/free/index)
+- [PRO overlays](/wiki/overlays/pro/index)
