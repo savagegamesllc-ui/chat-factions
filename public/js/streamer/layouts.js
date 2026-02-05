@@ -6,6 +6,9 @@ const statusEl = document.getElementById('status');
 const layoutsEl = document.getElementById('layouts');
 const overrideJsonEl = document.getElementById('overrideJson');
 
+// Tier picker (from layouts.ejs)
+const tierPickerEl = document.getElementById('tierPicker');
+
 // styleControls.js exports these in your build
 const StyleControls = window.StyleControls || null;
 
@@ -57,8 +60,9 @@ function safeParseJson(text) {
 }
 
 function badgeTier(tier) {
-  const cls = tier === 'PRO' ? 'badge pro' : 'badge free';
-  return `<span class="${cls}">${tier}</span>`;
+  const t = String(tier || '').toUpperCase() === 'PRO' ? 'PRO' : 'FREE';
+  const cls = t === 'PRO' ? 'badge pro' : 'badge free';
+  return `<span class="${cls}">${t}</span>`;
 }
 
 function planBadge(planTier) {
@@ -195,6 +199,8 @@ function ensureSlotPicker(streamer) {
     activeSlot = Number(sel.value) || 0;
     showStatus(`Switched to ${getSlotLabel(activeSlot)}.`, 'ok');
 
+    renderLayoutsGrid(); // re-render cards so the button labels/borders match the active slot
+
     // Choose the layout selected for this slot (if any) to edit
     const l = findSelectedForSlot(activeSlot);
     if (l) loadOverridePane(l).catch(err => console.warn(err));
@@ -203,6 +209,45 @@ function ensureSlotPicker(streamer) {
 
 function slotBadgeHtml(slotNum) {
   return `<span class="pill" style="font-weight:700;">${esc(getSlotLabel(slotNum))}</span>`;
+}
+
+/** -------- Tier Filter (NEW) -------- */
+
+const TIER_STORAGE_KEY = 'cf_layoutTier';
+let activeTier = (localStorage.getItem(TIER_STORAGE_KEY) || 'FREE').toUpperCase();
+if (activeTier !== 'FREE' && activeTier !== 'PRO') activeTier = 'FREE';
+
+function setActiveTier(tier) {
+  const t = String(tier || '').toUpperCase();
+  if (t !== 'FREE' && t !== 'PRO') return;
+  activeTier = t;
+  localStorage.setItem(TIER_STORAGE_KEY, activeTier);
+  updateTierButtons();
+  renderLayoutsGrid();
+}
+
+function updateTierButtons() {
+  if (!tierPickerEl) return;
+  tierPickerEl.querySelectorAll('[data-tier]').forEach(btn => {
+    const t = String(btn.getAttribute('data-tier') || '').toUpperCase();
+    const isActive = t === activeTier;
+    // Your site uses "secondary" for unselected — so remove it for active
+    btn.classList.toggle('secondary', !isActive);
+  });
+}
+
+function ensureTierPickerWired() {
+  if (!tierPickerEl) return;
+  if (tierPickerEl.dataset.wired === '1') return;
+
+  tierPickerEl.addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-tier]');
+    if (!btn) return;
+    setActiveTier(btn.getAttribute('data-tier'));
+  });
+
+  tierPickerEl.dataset.wired = '1';
+  updateTierButtons();
 }
 
 /** -------- Layout cards + selection state -------- */
@@ -270,7 +315,7 @@ function layoutCardHtml(l) {
   const selectLabel = selectedForActiveSlot ? 'Selected' : `Set for ${getSlotLabel(activeSlot)}`;
 
   return `
-    <div class="card" style="padding:14px; ${border}">
+    <div class="card" style="padding:14px; ${border}" data-layout-card="1" data-tier="${esc(l.tier)}">
       <div class="row">
         <div>
           <div style="font-weight:800;">${esc(l.name)}</div>
@@ -336,6 +381,24 @@ async function loadOverridePane(layout) {
   }
 }
 
+/** -------- Render filtered grid (NEW) -------- */
+
+function renderLayoutsGrid() {
+  if (!layoutsEl) return;
+
+  const layouts = (cached.layouts || []).filter(l => {
+    const t = String(l.tier || '').toUpperCase();
+    return t === activeTier;
+  });
+
+  const cards = layouts.map(l => layoutCardHtml(l)).join('');
+  layoutsEl.innerHTML = `<div class="grid two">${cards || `<div class="notice">No ${activeTier} layouts available.</div>`}</div>`;
+
+  wireLayoutCardEvents();
+}
+
+/** -------- Main refresh -------- */
+
 async function refresh() {
   showStatus('', 'ok');
   layoutsEl.innerHTML = '<div class="muted">Loading layouts…</div>';
@@ -348,20 +411,25 @@ async function refresh() {
 
   renderPlan(cached.streamer);
   ensureSlotPicker(cached.streamer);
+  ensureTierPickerWired();
 
-  // Render layout grid
-  const cards = cached.layouts.map(l => layoutCardHtml(l)).join('');
-  layoutsEl.innerHTML = `<div class="grid two">${cards}</div>`;
+  renderLayoutsGrid();
 
-  // Default editor target: selected for activeSlot (fallbacks)
+  // Default editor target:
+  // 1) selected for activeSlot (but only if it exists in current tier)
+  // 2) any selected (in current tier)
+  // 3) first enabled (in current tier)
+  const inTier = (l) => String(l.tier || '').toUpperCase() === activeTier;
+
   const selectedForSlot = findSelectedForSlot(activeSlot);
-  const anySelected = cached.layouts.find(l => l.selectedSlot != null) || cached.layouts.find(l => l.isSelected);
-  const fallback = selectedForSlot || anySelected || cached.layouts.find(l => l.isEnabled) || cached.layouts[0] || null;
+  const anySelected = cached.layouts.find(l => inTier(l) && l.selectedSlot != null) || cached.layouts.find(l => inTier(l) && l.isSelected);
+  const firstEnabled = cached.layouts.find(l => inTier(l) && l.isEnabled !== false);
+  const fallback = (selectedForSlot && inTier(selectedForSlot)) ? selectedForSlot : (anySelected || firstEnabled || cached.layouts.find(inTier) || null);
 
   if (fallback) await loadOverridePane(fallback);
-
-  wireEvents();
 }
+
+/** -------- Selection endpoints -------- */
 
 async function selectLayoutForActiveSlot(layoutId) {
   // Slot 0 uses legacy endpoint (keeps old contracts / minimal changes)
@@ -381,7 +449,9 @@ async function selectLayoutForActiveSlot(layoutId) {
   });
 }
 
-function wireEvents() {
+/** -------- Events (UPDATED) -------- */
+
+function wireLayoutCardEvents() {
   // Select for active slot
   layoutsEl.querySelectorAll('[data-select]').forEach(btn => {
     btn.addEventListener('click', async () => {
@@ -424,8 +494,13 @@ function wireEvents() {
       }
     });
   });
+}
 
-  // Autosave override on blur
+// ✅ Fix: do NOT use { once: true } here — it breaks saving after the first blur.
+function wireOverrideAutosave() {
+  if (!overrideJsonEl) return;
+  if (overrideJsonEl.dataset.wired === '1') return;
+
   overrideJsonEl.addEventListener('blur', async () => {
     if (!activeLayoutId) return;
 
@@ -452,9 +527,12 @@ function wireEvents() {
     } catch (err) {
       showStatus(err.message || 'Failed to save overrideConfig.', 'error');
     }
-  }, { once: true }); // important: avoid stacking listeners after refresh()
+  });
+
+  overrideJsonEl.dataset.wired = '1';
 }
 
 document.addEventListener('DOMContentLoaded', () => {
+  wireOverrideAutosave();
   refresh().catch(err => showStatus(err.message || 'Failed to load layouts.', 'error'));
 });
