@@ -78,6 +78,11 @@ model Streamer {
 
     // Per-streamer EventSub → hype mapping/policy
   eventConfig Json?
+    // Listener persistence (chat listener process state)
+  listenerDesired          Boolean   @default(false)
+  listenerStartedAt        DateTime?
+  listenerLastHeartbeatAt  DateTime?
+
 
 }
 
