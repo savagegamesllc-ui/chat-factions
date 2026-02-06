@@ -53,11 +53,14 @@ model Streamer {
   layouts  StreamerLayout[]
   views    OverlayView[]
   viewers  Viewer[]
+  latestActivity StreamerLatestActivity?
+
 
   // ✅ Opposite relation fields (required by Prisma for these relations)
   memberships FactionMembership[]
   eventLogs   EventLog[]
   voteEvents  VoteEvent[]
+  
 
   // Twitch OAuth tokens (for chat connection + refresh)
   twitchAccessToken     String?
@@ -169,8 +172,10 @@ model StreamSession {
   votes     VoteEvent[]
   cooldowns VoteCooldown[]
 
-  @@index([streamerId, startedAt])
   lastDecayAt DateTime?
+
+  @@index([streamerId, startedAt])
+  
 }
 
 model EventLog {
@@ -420,3 +425,26 @@ model ExternalEventReceipt {
   @@index([streamerId, createdAt])
 }
 
+model StreamerLatestActivity {
+  streamerId String @id
+  streamer   Streamer @relation(fields: [streamerId], references: [id], onDelete: Cascade)
+
+  latestFollowerName String?
+  latestFollowerAt   DateTime?
+
+  latestSubscriberName   String?
+  latestSubscriberAt     DateTime?
+  latestSubscriberTier   String?
+  latestSubscriberIsGift Boolean?
+
+  latestCheerName String?
+  latestCheerAt   DateTime?
+  latestCheerBits Int?
+
+  latestTipName     String?
+  latestTipAt       DateTime?
+  latestTipAmount   Float?
+  latestTipCurrency String?
+
+  updatedAt DateTime @updatedAt
+}
