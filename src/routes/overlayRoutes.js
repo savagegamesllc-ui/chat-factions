@@ -6,6 +6,7 @@ const { resolveOverlayByToken } = require('../services/overlayRenderService');
 const { overlayHeaders } = require('../middleware/overlayHeaders');
 const { registerClient, unregisterClient } = require('../services/realtimeHub');
 const { getMetersSnapshot } = require('../services/meterService');
+const { getStatsSnapshot } = require('../services/statsService');
 
 function isReservedToken(token) {
   const t = String(token || '').toLowerCase();
@@ -15,100 +16,66 @@ function isReservedToken(token) {
 function overlayRoutes() {
   const router = express.Router();
 
-  // ✅ IMPORTANT: SSE must be declared BEFORE /overlay/:token/:slot
   router.get('/overlay/:token/sse', overlayHeaders, async (req, res, next) => {
     const token = req.params.token;
-
-    // Give every SSE connection a short id so logs are easy to follow
     const connId = `sse:${token}:${Date.now().toString(36)}:${Math.random().toString(36).slice(2, 7)}`;
 
     try {
       if (isReservedToken(token)) return next();
 
-      // Resolve token -> streamer + layout info (slot 0 is fine)
       const resolved = await resolveOverlayByToken(token, 0);
+      const streamerId = resolved?.streamerId;
 
-      // 🔧 Prefer nested streamer object id first (most likely DB id),
-      // then fallback to other fields. This helps avoid "token wins" mismatches.
-      const streamerId =
-        resolved?.streamer?.id || resolved?.streamerId || resolved?.ownerStreamerId;
-
-      // 🔎 Debug: what did we resolve and what key are we about to use?
-      console.log('[SSE] resolve', {
-        connId,
-        token,
-        streamerId,
-        resolvedKeys: Object.keys(resolved || {}),
-        resolvedStreamerId: resolved?.streamerId,
-        resolvedStreamerObjId: resolved?.streamer?.id,
-        resolvedOwnerStreamerId: resolved?.ownerStreamerId,
-        styleKey: resolved?.styleKey
-      });
+      console.log('[SSE] resolve', { connId, token, streamerId, styleKey: resolved?.styleKey });
 
       if (!streamerId) {
-        console.warn('[SSE] missing streamerId', { connId, token });
         res.status(404).end();
         return;
       }
 
-      // SSE headers
       res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
       res.setHeader('Cache-Control', 'no-cache, no-transform');
       res.setHeader('Connection', 'keep-alive');
-      res.flushHeaders?.();
+      res.setHeader('X-Accel-Buffering', 'no');
+      if (typeof res.flushHeaders === 'function') res.flushHeaders();
 
-      // Register this response under streamerId
       registerClient(streamerId, res);
-      console.log('[SSE] registered', { connId, token, streamerId });
 
-      // Send initial meters so overlay updates immediately (and log result)
+      // Initial meters
       try {
         const snap = await getMetersSnapshot(streamerId);
         res.write(`event: meters\n`);
         res.write(`data: ${JSON.stringify(snap ?? {})}\n\n`);
-        console.log('[SSE] initial meters sent', {
-          connId,
-          streamerId,
-          snapType: snap ? typeof snap : 'null',
-          snapKeys: snap ? Object.keys(snap) : null
-        });
       } catch (e) {
-        console.error('[SSE] initial meters failed', {
-          connId,
-          streamerId,
-          message: e?.message || String(e)
-        });
+        console.error('[SSE] initial meters failed', { connId, streamerId, message: e?.message || String(e) });
       }
 
-      // Keepalive ping
+      // Initial stats
+      try {
+        const stats = await getStatsSnapshot(streamerId);
+        res.write(`event: stats\n`);
+        res.write(`data: ${JSON.stringify(stats ?? {})}\n\n`);
+      } catch (e) {
+        console.error('[SSE] initial stats failed', { connId, streamerId, message: e?.message || String(e) });
+      }
+
       const pingTimer = setInterval(() => {
         try {
           res.write(`event: ping\n`);
           res.write(`data: {"t":${Date.now()}}\n\n`);
-          // (optional) comment this in if you want noisy logs
-          // console.log('[SSE] ping', { connId, streamerId });
-        } catch (e) {
-          console.error('[SSE] ping write failed', {
-            connId,
-            streamerId,
-            message: e?.message || String(e)
-          });
-        }
-      }, 15000);
+        } catch (_) {}
+      }, 25000);
 
       req.on('close', () => {
         clearInterval(pingTimer);
-        unregisterClient(streamerId, res);
-        console.log('[SSE] closed', { connId, token, streamerId });
+        try { unregisterClient(streamerId, res); } catch (_) {}
         try { res.end(); } catch (_) {}
       });
     } catch (err) {
-      console.error('[SSE] handler error', { connId, token, message: err?.message || String(err) });
       next(err);
     }
   });
 
-  // Slot overlay URL: /overlay/:token/:slot (slot 0..3)
   router.get('/overlay/:token/:slot', overlayHeaders, async (req, res, next) => {
     try {
       const token = req.params.token;
@@ -130,7 +97,6 @@ function overlayRoutes() {
     }
   });
 
-  // Backward-compatible OBS overlay URL (slot 0): /overlay/:token
   router.get('/overlay/:token', overlayHeaders, async (req, res, next) => {
     try {
       const token = req.params.token;

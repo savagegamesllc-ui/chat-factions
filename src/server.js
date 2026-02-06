@@ -157,8 +157,8 @@ app.use(wikiRoutes);
 app.use(authRoutes);
 app.use(dashboardRoutes);
 app.use(ownerRoutes);
-app.use(realtimeRoutes);
 app.use(overlayRoutes);
+app.use(realtimeRoutes);
 app.use(billingRoutes);
 
 // Realtime + meters + chat

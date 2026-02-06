@@ -3,12 +3,20 @@
 
 const express = require('express');
 const { prisma } = require('../db/prisma');
+
 const { verifyEventSub } = require('../services/eventSubVerify');
 const { getOrCreateActiveSession } = require('../services/sessionService');
 const { addHype, getMetersSnapshot } = require('../services/meterService');
 const { broadcast } = require('../services/realtimeHub');
 const { getEffectiveEventConfig } = require('../services/eventConfigService');
 const { resolveFactionKey } = require('../services/hypePolicyService');
+
+// NEW: DB-backed latest-activity updates
+const {
+  setLatestFollower,
+  setLatestSubscriber,
+  setLatestCheer
+} = require('../services/statsService');
 
 function clampInt(n, lo, hi) {
   n = Number(n);
@@ -18,6 +26,9 @@ function clampInt(n, lo, hi) {
 }
 
 function normalizeEvent(subType, ev) {
+  if (subType === 'channel.follow') {
+    return { type: 'follow', value: 1, meta: ev };
+  }
   if (subType === 'channel.cheer') {
     return { type: 'cheer', value: Number(ev?.bits || 0), meta: ev };
   }
@@ -57,68 +68,35 @@ function mapDelta(eventCfg, normalized) {
   return maxDelta > 0 ? Math.min(raw, maxDelta) : raw;
 }
 
+function pickEventUserName(ev) {
+  return ev?.user_name || ev?.user_login || null;
+}
+
 function eventSubRoutes({ env }) {
   const router = express.Router();
 
-  // IMPORTANT: EventSub must receive RAW body for signature verification.
   router.post(
     '/twitch/eventsub',
     express.raw({ type: '*/*', limit: '2mb' }),
     async (req, res) => {
       const secret = String(env.EVENTSUB_WEBHOOK_SECRET || '').trim();
-      if (!secret) return res.status(500).type('text/plain').send('Missing EVENTSUB_WEBHOOK_SECRET');
-
-      if (!Buffer.isBuffer(req.body)) {
-        console.warn('[eventsub] non-raw body', {
-          bodyType: typeof req.body,
-          contentType: req.headers['content-type'],
-        });
-        return res.status(400).type('text/plain').send('Expected raw body');
-      }
-
-      const rawBody = req.body;
-
-      const msgType = String(req.headers['twitch-eventsub-message-type'] || '');
-      const msgIdHdr = String(req.headers['twitch-eventsub-message-id'] || '');
-
-      console.log('[eventsub] inbound', {
-        type: msgType,
-        id: msgIdHdr ? msgIdHdr.slice(0, 12) : '',
-        bodyLen: rawBody.length,
-        ct: String(req.headers['content-type'] || ''),
-      });
-
-      const v = verifyEventSub(req, rawBody, secret);
-      if (!v.ok) return res.status(403).type('text/plain').send(v.reason || 'Invalid signature');
+      if (!secret) return res.status(500).send('Missing EVENTSUB_WEBHOOK_SECRET');
 
       let payload;
       try {
-        payload = JSON.parse(rawBody.toString('utf8') || '{}');
-      } catch {
-        return res.status(400).type('text/plain').send('Invalid JSON');
+        payload = verifyEventSub({ req, secret });
+      } catch (e) {
+        console.warn('[eventsub] verify failed', e?.message || e);
+        return res.sendStatus(403);
       }
 
-      const msgId = String(req.headers['twitch-eventsub-message-id'] || v.messageId || '');
+      const msgType = String(req.header('Twitch-Eventsub-Message-Type') || '').toLowerCase();
+      const msgId = String(req.header('Twitch-Eventsub-Message-Id') || '').trim();
 
-      // 1) Verification handshake
       if (msgType === 'webhook_callback_verification') {
-        const challenge = payload?.challenge;
-        if (!challenge) return res.status(400).type('text/plain').send('Missing challenge');
-        console.log('[eventsub] verification ok', { id: msgId ? msgId.slice(0, 12) : '' });
-        return res.status(200).type('text/plain').send(String(challenge));
+        return res.status(200).type('text/plain').send(payload.challenge);
       }
 
-      // 2) Revocation
-      if (msgType === 'revocation') {
-        console.warn('[eventsub] revoked', {
-          type: payload?.subscription?.type,
-          status: payload?.subscription?.status,
-          reason: payload?.subscription?.status,
-        });
-        return res.sendStatus(204);
-      }
-
-      // 3) Notification
       if (msgType !== 'notification') return res.sendStatus(204);
 
       const subType = payload?.subscription?.type;
@@ -126,76 +104,94 @@ function eventSubRoutes({ env }) {
 
       const broadcasterId =
         ev?.broadcaster_user_id ||
-        payload?.subscription?.condition?.broadcaster_user_id ||
-        null;
+        payload?.subscription?.condition?.broadcaster_user_id;
 
       if (!broadcasterId) return res.sendStatus(204);
 
       const streamer = await prisma.streamer.findUnique({
         where: { twitchUserId: String(broadcasterId) },
-        select: { id: true },
+        select: { id: true }
       });
 
       if (!streamer) return res.sendStatus(204);
 
-      // ✅ Idempotency (FIXED): use existing compound unique streamerId_eventId
+      // Idempotency
       if (msgId) {
         const seen = await prisma.externalEventReceipt.findUnique({
           where: {
             streamerId_eventId: {
               streamerId: streamer.id,
-              eventId: msgId,
-            },
-          },
-          select: { id: true },
+              eventId: msgId
+            }
+          }
         });
-
         if (seen) return res.sendStatus(204);
+
+        try {
+          await prisma.externalEventReceipt.create({
+            data: {
+              streamerId: streamer.id,
+              eventId: msgId
+            }
+          });
+        } catch (_) {}
+      }
+
+      const normalized = normalizeEvent(subType, ev);
+      if (!normalized) return res.sendStatus(204);
+
+      // ✅ Update latest activity (always)
+      try {
+        if (subType === 'channel.follow') {
+          await setLatestFollower(streamer.id, {
+            name: pickEventUserName(ev),
+            at: new Date()
+          });
+        } else if (subType === 'channel.cheer') {
+          await setLatestCheer(streamer.id, {
+            name: pickEventUserName(ev),
+            bits: Number(ev?.bits || 0),
+            at: new Date()
+          });
+        } else if (
+          subType === 'channel.subscribe' ||
+          subType === 'channel.subscription.message'
+        ) {
+          await setLatestSubscriber(streamer.id, {
+            name: pickEventUserName(ev),
+            tier: ev?.tier || null,
+            isGift: false,
+            at: new Date()
+          });
+        } else if (subType === 'channel.subscription.gift') {
+          await setLatestSubscriber(streamer.id, {
+            name: pickEventUserName(ev),
+            tier: ev?.tier || null,
+            isGift: true,
+            at: new Date()
+          });
+        }
+      } catch (e) {
+        console.error('[eventsub] stats update failed', e?.message || e);
       }
 
       const eventCfg = await getEffectiveEventConfig(streamer.id);
       if (eventCfg.enabled === false) return res.sendStatus(204);
 
-      const normalized = normalizeEvent(subType, ev);
-      if (!normalized) return res.sendStatus(204);
-
       const session = await getOrCreateActiveSession(streamer.id);
-
       const factionKey = await resolveFactionKey({
         streamerId: streamer.id,
         sessionId: session.id,
-        eventCfg,
+        eventCfg
       });
 
       const delta = mapDelta(eventCfg, normalized);
       if (!factionKey || delta <= 0) return res.sendStatus(204);
 
-      // ✅ Record receipt (FIXED): store msgId into eventId
-      if (msgId) {
-        try {
-          await prisma.externalEventReceipt.create({
-            data: {
-              streamerId: streamer.id,
-              eventId: msgId,
-            },
-          });
-        } catch (_) {
-          // ignore unique race
-        }
-      }
+      await addHype(streamer.id, factionKey, delta, 'eventsub', { subType });
 
-      try {
-        await addHype(streamer.id, factionKey, delta, 'eventsub', {
-          subType,
-          broadcasterId,
-          normalized,
-        });
-
-        const snap = await getMetersSnapshot(streamer.id);
-        broadcast(streamer.id, 'meters', snap);
-      } catch (e) {
-        console.error('[eventsub] apply error', e?.message || e);
-      }
+      const snap = await getMetersSnapshot(streamer.id);
+      broadcast(streamer.id, 'meters', snap);
 
       return res.sendStatus(204);
     }

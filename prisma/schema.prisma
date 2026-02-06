@@ -414,3 +414,4 @@ model ExternalEventReceipt {
   @@unique([streamerId, eventId])
   @@index([streamerId, createdAt])
 }
+

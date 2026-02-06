@@ -38,23 +38,31 @@ async function findOverlayRoot() {
 }
 
 function makeApi({ streamerToken }) {
-  const handlers = new Set();
+  const meterHandlers = new Set();
+  const statsHandlers = new Set();
 
   const params = new URLSearchParams(window.location.search || '');
   const isPreview = params.get('preview') === '1';
 
   let maxHypeEnabled = false;
 
-  // Keep last real snap so we can revert cleanly when sim stops
+  // Keep last real state so we can revert cleanly when sim stops
   let lastRealSnap = null;
+  let lastRealStats = null;
 
   // Simulation state
   let simTimer = null;
   let simT = 0;
 
-  function emitToHandlers(snap) {
-    handlers.forEach((fn) => {
+  function emitMeters(snap) {
+    meterHandlers.forEach((fn) => {
       try { fn(snap); } catch {}
+    });
+  }
+
+  function emitStats(stats) {
+    statsHandlers.forEach((fn) => {
+      try { fn(stats); } catch {}
     });
   }
 
@@ -72,11 +80,19 @@ function makeApi({ streamerToken }) {
       const a = 50 + wave * 600;
       const b = 50 + (1 - wave) * 600;
 
-      emitToHandlers({
+      emitMeters({
         factions: [
           { meter: a, colorHex: '#ff6a00' },
           { meter: b, colorHex: '#ff2e2e' },
         ]
+      });
+
+      // Optional: a simple stats sim so overlays can test dynamic text in preview
+      emitStats({
+        latestFollower: {
+          name: wave > 0.5 ? 'PreviewFollowerA' : 'PreviewFollowerB',
+          at: Date.now()
+        }
       });
     }, 100);
   }
@@ -86,9 +102,12 @@ function makeApi({ streamerToken }) {
     clearInterval(simTimer);
     simTimer = null;
 
-    // When stopping, restore last real state if we have one
-    if (lastRealSnap) emitToHandlers(lastRealSnap);
-    else emitToHandlers({ factions: [] });
+    // Restore last real state if we have it
+    if (lastRealSnap) emitMeters(lastRealSnap);
+    else emitMeters({ factions: [] });
+
+    if (lastRealStats) emitStats(lastRealStats);
+    else emitStats({});
   }
 
   // Listen for preview toggle messages from dashboard
@@ -98,7 +117,6 @@ function makeApi({ streamerToken }) {
       if (!msg || msg.type !== 'DEV_PREVIEW_MAX_HYPE') return;
 
       maxHypeEnabled = !!msg.enabled;
-
       if (maxHypeEnabled) startSim();
       else stopSim();
     });
@@ -113,9 +131,21 @@ function makeApi({ streamerToken }) {
       const snap = JSON.parse(ev.data);
       lastRealSnap = snap;
 
-      // If sim is ON, don't overwrite the visuals—just remember real snap.
+      // If sim is ON, don't overwrite visuals—just remember real snap
       if (!(isPreview && maxHypeEnabled)) {
-        emitToHandlers(snap);
+        emitMeters(snap);
+      }
+    } catch (_) {}
+  });
+
+  // NEW: stats stream (server will emit event: "stats")
+  es.addEventListener('stats', (ev) => {
+    try {
+      const stats = JSON.parse(ev.data);
+      lastRealStats = stats;
+
+      if (!(isPreview && maxHypeEnabled)) {
+        emitStats(stats);
       }
     } catch (_) {}
   });
@@ -126,16 +156,28 @@ function makeApi({ streamerToken }) {
 
   return {
     onMeters(fn) {
-      handlers.add(fn);
+      meterHandlers.add(fn);
+
       // If we already have a real snap, push it once
       if (lastRealSnap && !(isPreview && maxHypeEnabled)) {
         try { fn(lastRealSnap); } catch {}
       }
-      return () => handlers.delete(fn);
+
+      return () => meterHandlers.delete(fn);
+    },
+
+    // NEW: overlays can subscribe to stats snapshots
+    onStats(fn) {
+      statsHandlers.add(fn);
+
+      if (lastRealStats && !(isPreview && maxHypeEnabled)) {
+        try { fn(lastRealStats); } catch {}
+      }
+
+      return () => statsHandlers.delete(fn);
     }
   };
 }
-
 
 function normalizeStyleKey(styleKey) {
   const s = String(styleKey || '').trim();
