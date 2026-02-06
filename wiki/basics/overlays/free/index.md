@@ -6,6 +6,7 @@ These overlays are available on the **FREE** tier.
 - [Bubble Bloom](/wiki/basics/overlays/free/bubbleBloom)
 - [Constellation Drift](/wiki/basics/overlays/free/constellationDrift)
 - [Constellation Twinkle](/wiki/basics/overlays/free/constellationTwinkle)
+- [Fairy Friend](/wiki/basics/overlays/free/fairyFriend)
 - [Flame Edge](/wiki/basics/overlays/free/flameEdge)
 - [Focus Ring](/wiki/basics/overlays/free/focusRing)
 - [Hype Words](/wiki/basics/overlays/free/hypeWords)
