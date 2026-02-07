@@ -11,11 +11,10 @@ const { broadcast } = require('../services/realtimeHub');
 const { getEffectiveEventConfig } = require('../services/eventConfigService');
 const { resolveFactionKey } = require('../services/hypePolicyService');
 
-// NEW: DB-backed latest-activity updates
 const {
   setLatestFollower,
   setLatestSubscriber,
-  setLatestCheer
+  setLatestCheer,
 } = require('../services/statsService');
 
 function clampInt(n, lo, hi) {
@@ -26,21 +25,11 @@ function clampInt(n, lo, hi) {
 }
 
 function normalizeEvent(subType, ev) {
-  if (subType === 'channel.follow') {
-    return { type: 'follow', value: 1, meta: ev };
-  }
-  if (subType === 'channel.cheer') {
-    return { type: 'cheer', value: Number(ev?.bits || 0), meta: ev };
-  }
-  if (subType === 'channel.subscribe') {
-    return { type: 'sub', value: 1, meta: ev };
-  }
-  if (subType === 'channel.subscription.gift') {
-    return { type: 'gift', value: 1, meta: ev };
-  }
-  if (subType === 'channel.subscription.message') {
-    return { type: 'resub', value: 1, meta: ev };
-  }
+  if (subType === 'channel.follow') return { type: 'follow', value: 1, meta: ev };
+  if (subType === 'channel.cheer') return { type: 'cheer', value: Number(ev?.bits || 0), meta: ev };
+  if (subType === 'channel.subscribe') return { type: 'sub', value: 1, meta: ev };
+  if (subType === 'channel.subscription.gift') return { type: 'gift', value: 1, meta: ev };
+  if (subType === 'channel.subscription.message') return { type: 'resub', value: 1, meta: ev };
   return null;
 }
 
@@ -72,31 +61,81 @@ function pickEventUserName(ev) {
   return ev?.user_name || ev?.user_login || null;
 }
 
+function safeJsonParse(buf) {
+  try {
+    const s = Buffer.isBuffer(buf) ? buf.toString('utf8') : String(buf || '');
+    return JSON.parse(s);
+  } catch {
+    return null;
+  }
+}
+
+function getHeader(req, name) {
+  // robust, case-insensitive header read
+  if (typeof req.get === 'function') return req.get(name) || '';
+  return req.headers?.[String(name).toLowerCase()] || '';
+}
+
 function eventSubRoutes({ env }) {
   const router = express.Router();
 
   router.post(
     '/twitch/eventsub',
+    // MUST be raw for signature verification
     express.raw({ type: '*/*', limit: '2mb' }),
     async (req, res) => {
+      const rawBody = req.body; // Buffer
       const secret = String(env.EVENTSUB_WEBHOOK_SECRET || '').trim();
-      if (!secret) return res.status(500).send('Missing EVENTSUB_WEBHOOK_SECRET');
+      if (!secret) return res.status(500).type('text/plain').send('Missing EVENTSUB_WEBHOOK_SECRET');
 
-      let payload;
-      try {
-        payload = verifyEventSub({ req, secret });
-      } catch (e) {
-        console.warn('[eventsub] verify failed', e?.message || e);
+      // Useful raw-hit log (shows if it's Twitch or something else)
+      console.log('[eventsub] hit', {
+        ip: req.ip,
+        remote: req.socket?.remoteAddress,
+        host: req.headers?.host || '',
+        url: req.originalUrl,
+        ct: String(req.headers?.['content-type'] || ''),
+        bodyLen: Buffer.isBuffer(rawBody) ? rawBody.length : 0,
+        twitchHdrs: Object.keys(req.headers || {}).filter((k) => k.includes('twitch-eventsub')),
+      });
+
+      // Message type/id are headers (lowercase in req.headers)
+      const msgType = String(getHeader(req, 'Twitch-Eventsub-Message-Type') || '').toLowerCase();
+      const msgId = String(getHeader(req, 'Twitch-Eventsub-Message-Id') || '').trim();
+
+      // 1) Verify signature FIRST (before JSON parse)
+      const v = verifyEventSub(req, rawBody, secret);
+      if (!v?.ok) {
+        // 403 tells Twitch the delivery failed (it will retry), which is what we want when signature is wrong.
         return res.sendStatus(403);
       }
 
-      const msgType = String(req.headers['twitch-eventsub-message-type'] || '').toLowerCase();
-      const msgId = String(req.header('Twitch-Eventsub-Message-Id') || '').trim();
-
-      if (msgType === 'webhook_callback_verification') {
-        return res.status(200).type('text/plain').send(payload.challenge);
+      // 2) Parse payload after verification
+      const payload = safeJsonParse(rawBody);
+      if (!payload) {
+        console.warn('[eventsub] invalid JSON payload', { msgId: msgId ? msgId.slice(0, 12) : '', bodyLen: rawBody?.length || 0 });
+        return res.sendStatus(400);
       }
 
+      // 3) Verification challenge
+      if (msgType === 'webhook_callback_verification') {
+        const challenge = payload?.challenge;
+        if (!challenge) return res.sendStatus(400);
+        return res.status(200).type('text/plain').send(String(challenge));
+      }
+
+      // 4) Revocation
+      if (msgType === 'revocation') {
+        console.warn('[eventsub] revocation', {
+          msgId: msgId ? msgId.slice(0, 12) : '',
+          subType: payload?.subscription?.type,
+          status: payload?.subscription?.status,
+          reason: payload?.subscription?.status,
+        });
+        return res.sendStatus(204);
+      }
+
+      // 5) Notifications only beyond this point
       if (msgType !== 'notification') return res.sendStatus(204);
 
       const subType = payload?.subscription?.type;
@@ -110,7 +149,7 @@ function eventSubRoutes({ env }) {
 
       const streamer = await prisma.streamer.findUnique({
         where: { twitchUserId: String(broadcasterId) },
-        select: { id: true }
+        select: { id: true },
       });
 
       if (!streamer) return res.sendStatus(204);
@@ -121,77 +160,62 @@ function eventSubRoutes({ env }) {
           where: {
             streamerId_eventId: {
               streamerId: streamer.id,
-              eventId: msgId
-            }
-          }
+              eventId: msgId,
+            },
+          },
+          select: { id: true },
         });
+
         if (seen) return res.sendStatus(204);
 
         try {
           await prisma.externalEventReceipt.create({
-            data: {
-              streamerId: streamer.id,
-              eventId: msgId
-            }
+            data: { streamerId: streamer.id, eventId: msgId },
           });
-        } catch (_) {}
+        } catch (_) {
+          // ignore unique race
+        }
       }
 
       const normalized = normalizeEvent(subType, ev);
       if (!normalized) return res.sendStatus(204);
 
-      // ✅ Update latest activity (always)
+      // Always update latest activity stats
       try {
         if (subType === 'channel.follow') {
-          await setLatestFollower(streamer.id, {
-            name: pickEventUserName(ev),
-            at: new Date()
-          });
+          await setLatestFollower(streamer.id, { name: pickEventUserName(ev), at: new Date() });
         } else if (subType === 'channel.cheer') {
-          await setLatestCheer(streamer.id, {
-            name: pickEventUserName(ev),
-            bits: Number(ev?.bits || 0),
-            at: new Date()
-          });
-        } else if (
-          subType === 'channel.subscribe' ||
-          subType === 'channel.subscription.message'
-        ) {
-          await setLatestSubscriber(streamer.id, {
-            name: pickEventUserName(ev),
-            tier: ev?.tier || null,
-            isGift: false,
-            at: new Date()
-          });
+          await setLatestCheer(streamer.id, { name: pickEventUserName(ev), bits: Number(ev?.bits || 0), at: new Date() });
+        } else if (subType === 'channel.subscribe' || subType === 'channel.subscription.message') {
+          await setLatestSubscriber(streamer.id, { name: pickEventUserName(ev), tier: ev?.tier || null, isGift: false, at: new Date() });
         } else if (subType === 'channel.subscription.gift') {
-          await setLatestSubscriber(streamer.id, {
-            name: pickEventUserName(ev),
-            tier: ev?.tier || null,
-            isGift: true,
-            at: new Date()
-          });
+          await setLatestSubscriber(streamer.id, { name: pickEventUserName(ev), tier: ev?.tier || null, isGift: true, at: new Date() });
         }
       } catch (e) {
         console.error('[eventsub] stats update failed', e?.message || e);
       }
 
+      // Apply hype (optional, based on config)
       const eventCfg = await getEffectiveEventConfig(streamer.id);
-      if (eventCfg.enabled === false) return res.sendStatus(204);
+      if (eventCfg?.enabled === false) return res.sendStatus(204);
 
       const session = await getOrCreateActiveSession(streamer.id);
       const factionKey = await resolveFactionKey({
         streamerId: streamer.id,
         sessionId: session.id,
-        eventCfg
+        eventCfg,
       });
 
       const delta = mapDelta(eventCfg, normalized);
       if (!factionKey || delta <= 0) return res.sendStatus(204);
 
-      await addHype(streamer.id, factionKey, delta, 'eventsub', { subType });
-
-      const snap = await getMetersSnapshot(streamer.id);
-      broadcast(streamer.id, 'meters', snap);
+      try {
+        await addHype(streamer.id, factionKey, delta, 'eventsub', { subType });
+        const snap = await getMetersSnapshot(streamer.id);
+        broadcast(streamer.id, 'meters', snap);
+      } catch (e) {
+        console.error('[eventsub] hype apply failed', e?.message || e);
+      }
 
       return res.sendStatus(204);
     }
