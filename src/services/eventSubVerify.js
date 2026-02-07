@@ -4,8 +4,15 @@
 const crypto = require('node:crypto');
 
 function getHeader(req, name) {
-  const key = String(name || '').toLowerCase();
-  return (req?.headers?.[key] ?? req?.headers?.[name] ?? '') || '';
+  const proper = String(name || '');
+  const key = proper.toLowerCase();
+
+  // Express provides req.get()/req.header() which handles casing reliably
+  const viaGet = typeof req?.get === 'function' ? req.get(proper) : '';
+  if (viaGet) return viaGet;
+
+  // Node stores header keys lowercased in req.headers
+  return (req?.headers?.[key] ?? '') || '';
 }
 
 function computeSignature({ secret, messageId, timestamp, rawBody }) {
@@ -34,17 +41,27 @@ function verifyEventSub(req, rawBody, secret) {
 
   const bodyBuf = Buffer.isBuffer(rawBody) ? rawBody : Buffer.from(rawBody || '');
 
-  if (!messageId || !timestamp || !signature) {
+  // Treat empty body as a verifier failure too — Twitch always sends a body.
+  if (!messageId || !timestamp || !signature || bodyBuf.length === 0) {
     console.warn('[eventsub verify] missing headers', {
       hasId: !!messageId,
       hasTs: !!timestamp,
       hasSig: !!signature,
       bodyLen: bodyBuf.length,
+
+      // These extra bits will tell us immediately if the request is really Twitch:
+      twitchHeaderKeys: Object.keys(req?.headers || {}).filter((k) => k.includes('twitch-eventsub')),
+      contentType: String(req?.headers?.['content-type'] || ''),
+      userAgent: String(req?.headers?.['user-agent'] || ''),
+      // x-forwarded-for is useful if you’re behind nginx/proxy
+      xff: String(req?.headers?.['x-forwarded-for'] || ''),
     });
 
     return {
       ok: false,
-      reason: 'Missing EventSub headers.',
+      reason: bodyBuf.length === 0
+        ? 'Empty body (expected Twitch EventSub payload).'
+        : 'Missing EventSub headers.',
       messageId: String(messageId || ''),
       timestamp: String(timestamp || ''),
       signature: String(signature || ''),

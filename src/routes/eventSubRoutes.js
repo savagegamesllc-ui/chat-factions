@@ -90,7 +90,7 @@ function eventSubRoutes({ env }) {
         return res.sendStatus(403);
       }
 
-      const msgType = String(req.header('Twitch-Eventsub-Message-Type') || '').toLowerCase();
+      const msgType = String(req.headers['twitch-eventsub-message-type'] || '').toLowerCase();
       const msgId = String(req.header('Twitch-Eventsub-Message-Id') || '').trim();
 
       if (msgType === 'webhook_callback_verification') {
