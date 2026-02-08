@@ -102,11 +102,11 @@ function buildTwitchAuthorizeUrl(state) {
   u.searchParams.set('state', String(state || ''));
 
   // Optional but useful when adding new scopes:
+  // If you ever expand scopes and want Twitch to re-prompt:
   // u.searchParams.set('force_verify', 'true');
 
   return u.toString();
 }
-
 
 /**
  * Fetch Twitch user from Helix using access token.
@@ -237,11 +237,45 @@ async function exchangeCodeForToken(code) {
   };
 }
 
+/**
+ * After OAuth completes, we:
+ * 1) exchange code -> tokens
+ * 2) fetch helix user
+ * 3) upsert streamer + store tokens
+ * 4) ✅ ensure EventSub subscriptions for THIS streamer (best-effort)
+ */
 async function handleOAuthCallback(code) {
   const tokenBundle = await exchangeCodeForToken(code);
   const twitchUser = await fetchTwitchUser(tokenBundle.accessToken);
   const streamer = await upsertStreamerFromTwitchUser(twitchUser, tokenBundle);
-  return { streamer, twitchUser, tokenBundle };
+
+  // ✅ Best-effort: ensure EventSub subs exist for this streamer.
+  // This is what makes "bits/subs on streamer channel" work without any viewer signup.
+  let eventSubEnsure = null;
+  try {
+    // Lazy require avoids circular deps and keeps this service safe if ensure isn't implemented yet
+    // eventSubService should export ensureEventSubsForStreamer(streamerId)
+    const es = require('./eventSubService');
+    if (es && typeof es.ensureEventSubsForStreamer === 'function') {
+      eventSubEnsure = await es.ensureEventSubsForStreamer(streamer.id);
+      console.log('[auth] eventsub ensured', {
+        streamerId: streamer.id,
+        twitchUserId: streamer.twitchUserId,
+        result: eventSubEnsure,
+      });
+    } else {
+      console.log('[auth] eventsub ensure skipped (ensureEventSubsForStreamer not available)');
+    }
+  } catch (e) {
+    console.error('[auth] eventsub ensure failed', {
+      streamerId: streamer?.id,
+      twitchUserId: streamer?.twitchUserId,
+      message: e?.message || String(e),
+    });
+    // Do NOT fail OAuth just because EventSub ensure failed.
+  }
+
+  return { streamer, twitchUser, tokenBundle, eventSubEnsure };
 }
 
 /**
