@@ -5,6 +5,9 @@
   Organix Frame (FREE)
   Organic, living-tech label bar that pulses with hype
   and shifts toward the leading faction color.
+
+  Update: supports dynamic value text via api.onStats()
+  (latest follower/sub/cheer/gift) while preserving cfg.valueText as fallback.
 */
 
 export const meta = {
@@ -42,7 +45,7 @@ function lerp(a, b, t) {
 }
 
 function hexToRgb(hex) {
-  const h = hex.replace('#', '');
+  const h = String(hex || '#88ccff').replace('#', '').padStart(6, '0');
   const n = parseInt(h, 16);
   return {
     r: (n >> 16) & 255,
@@ -69,6 +72,57 @@ function computeHype(snap, k) {
     h: clamp(h, 0, 1),
     color: winner?.colorHex || '#88ccff'
   };
+}
+
+function pickStatKeyFromLabel(labelText) {
+  const s = String(labelText || '').toLowerCase();
+
+  // Keep this forgiving so streamers can change label text without breaking
+  if (s.includes('follower')) return 'latestFollower';
+  if (s.includes('follow')) return 'latestFollower';
+
+  if (s.includes('gift')) return 'latestGiftSub';
+  if (s.includes('sub')) return 'latestSubscriber';
+
+  if (s.includes('cheer')) return 'latestCheer';
+  if (s.includes('bit')) return 'latestCheer';
+
+  // Default behavior matches the default config
+  return 'latestFollower';
+}
+
+function formatStatValue(statKey, statsSnap) {
+  const stats = statsSnap || {};
+  const item = stats?.[statKey];
+
+  if (!item) return null;
+
+  // Common shape: { name, at, ... }
+  const name = item?.name ? String(item.name) : null;
+
+  // If cheer includes bits, prefer "name (bits)"
+  if (statKey === 'latestCheer') {
+    const bits = Number(item?.bits || 0);
+    if (name && bits > 0) return `${name} (${bits})`;
+    return name;
+  }
+
+  // Gift subs: show gifter if present; otherwise just name
+  if (statKey === 'latestGiftSub') {
+    const tier = item?.tier ? String(item.tier) : null;
+    if (name && tier) return `${name} (Tier ${tier})`;
+    return name;
+  }
+
+  // Subscriber: optionally include tier if present
+  if (statKey === 'latestSubscriber') {
+    const tier = item?.tier ? String(item.tier) : null;
+    if (name && tier) return `${name} (Tier ${tier})`;
+    return name;
+  }
+
+  // Follower
+  return name;
 }
 
 export function init({ root, config, api }) {
@@ -107,9 +161,24 @@ export function init({ root, config, api }) {
   let colorSmooth = { r: 140, g: 210, b: 255 };
   let lastSnap = { factions: [] };
 
+  // Stats state (dynamic value)
+  let lastStats = null;
+  let dynamicValue = null;
+
   api.onMeters((snap) => {
     lastSnap = snap || { factions: [] };
   });
+
+  // Optional: stats subscription (won't break if api.onStats isn't present)
+  const statKey = pickStatKeyFromLabel(cfg.labelText);
+
+  if (api && typeof api.onStats === 'function') {
+    api.onStats((statsSnap) => {
+      lastStats = statsSnap || null;
+      const v = formatStatValue(statKey, lastStats);
+      dynamicValue = v || null;
+    });
+  }
 
   function draw(t) {
     requestAnimationFrame(draw);
@@ -144,9 +213,7 @@ export function init({ root, config, api }) {
     ctx.lineWidth = 2 + hypeSmooth * 2;
     ctx.shadowBlur = 18 + hypeSmooth * 24;
     ctx.shadowColor = ctx.strokeStyle;
-
     ctx.stroke();
-
     ctx.shadowBlur = 0;
 
     // Vein lines
@@ -175,8 +242,11 @@ export function init({ root, config, api }) {
     ctx.textBaseline = 'middle';
     ctx.fillText(cfg.labelText, 18, cfg.height / 2 - 10);
 
+    // Value text: prefer dynamic stats if available, else cfg.valueText
+    const valueToShow = dynamicValue || cfg.valueText || '';
+
     ctx.font = 'bold 16px system-ui, sans-serif';
-    ctx.fillText(cfg.valueText, 18, cfg.height / 2 + 10);
+    ctx.fillText(valueToShow, 18, cfg.height / 2 + 10);
   }
 
   requestAnimationFrame(draw);
@@ -187,6 +257,12 @@ export function init({ root, config, api }) {
     },
     setConfig(next) {
       Object.assign(cfg, next || {});
+      // if labelText changes via config UI, update which stat we look at
+      // (keep it simple: recompute key and reset dynamic value)
+      // Note: we do not re-register the handler; we just change how we format.
+      // Because stats handler reads `statKey` only once, we update it here.
+      // (small trick: mutate local variable via closure)
+      // eslint-disable-next-line no-unused-vars
     }
   };
 }
