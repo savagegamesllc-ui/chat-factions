@@ -95,7 +95,7 @@ async function listEventSubSubscriptions({ appAccessToken }) {
   });
 }
 
-async function createEventSubSubscription({ userAccessToken, broadcasterUserId, callbackUrl, secret, type, version }) {
+async function createEventSubSubscription({ appAccessToken, broadcasterUserId, callbackUrl, secret, type, version }) {
   const clientId = readEnv('TWITCH_CLIENT_ID');
   if (!clientId) throw new Error('TWITCH_CLIENT_ID missing');
 
@@ -114,12 +114,13 @@ async function createEventSubSubscription({ userAccessToken, broadcasterUserId, 
     method: 'POST',
     headers: {
       'Client-Id': clientId,
-      Authorization: `Bearer ${userAccessToken}`,
+      Authorization: `Bearer ${appAccessToken}`,   // ✅ APP TOKEN
       'Content-Type': 'application/json',
     },
     body: JSON.stringify(payload),
   });
 }
+
 
 async function ensureEventSubsForStreamer(streamerId) {
   const callbackUrl = readEnv('EVENTSUB_WEBHOOK_URL') || 'https://chatfactions.me/twitch/eventsub';
@@ -131,16 +132,15 @@ async function ensureEventSubsForStreamer(streamerId) {
     select: {
       id: true,
       twitchUserId: true,
-      twitchAccessToken: true,
       twitchScopes: true,
     },
   });
 
   if (!streamer?.twitchUserId) throw new Error(`Streamer ${streamerId} missing twitchUserId`);
-  if (!streamer?.twitchAccessToken) throw new Error(`Streamer ${streamerId} missing twitchAccessToken`);
 
-  // Use an app token to LIST subs (cheap + global)
+  // ✅ App token is required for webhook EventSub APIs
   const appToken = await getAppAccessToken();
+
   const list = await listEventSubSubscriptions({ appAccessToken: appToken });
 
   const existing = (list?.data || []).filter(s =>
@@ -150,23 +150,21 @@ async function ensureEventSubsForStreamer(streamerId) {
   );
 
   const existingKey = new Set(existing.map(s => `${s.type}:${s.version}`));
-
   const need = requiredTypes().filter(x => !existingKey.has(`${x.type}:${x.version}`));
 
   const created = [];
   for (const sub of need) {
     try {
-      const resp = await createEventSubSubscription({
-        userAccessToken: streamer.twitchAccessToken,
+      await createEventSubSubscription({
+        appAccessToken: appToken,                 // ✅ APP TOKEN
         broadcasterUserId: streamer.twitchUserId,
         callbackUrl,
         secret,
         type: sub.type,
         version: sub.version,
       });
-      created.push({ type: sub.type, version: sub.version, resp });
+      created.push({ type: sub.type, version: sub.version });
     } catch (e) {
-      // Log loudly so you know if it failed due to missing scope, invalid token, etc.
       console.error('[eventsub ensure] create failed', {
         streamerId: streamer.id,
         broadcaster: streamer.twitchUserId,
@@ -184,9 +182,10 @@ async function ensureEventSubsForStreamer(streamerId) {
     callbackUrl,
     ensured: requiredTypes().length,
     alreadyEnabled: existing.length,
-    created: created.map(c => ({ type: c.type, version: c.version })),
+    created,
   };
 }
+
 
 async function getAppAccessToken() {
   const clientId = readEnv('TWITCH_CLIENT_ID');
