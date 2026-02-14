@@ -1,14 +1,10 @@
 // public/overlays/styles/controlPoint.js
 // PRO Overlay: Control Point (Overwatch-inspired tactical HUD)
 //
-// Contract:
-//   export const meta
-//   export function init({ root, config, api })
-//
-// Notes:
-// - Uses 4 corner PNGs (TL/TR/BL/BR) for premium bevel look.
-// - Keeps faction-reactive glow + objective bar procedural.
-// - Low visual noise: designed to be streamer-safe.
+// Uses 4 corner PNGs (TL/TR/BL/BR) for premium bevel look.
+// Adds auto “inner channel” tinting by building a mask from darker pixels in each PNG.
+// Keeps objective bar + scan + notch + pips procedural.
+// Low visual noise. Streamer-safe.
 
 'use strict';
 
@@ -17,7 +13,7 @@ export const meta = {
   name: 'Control Point (PRO)',
   tier: 'PRO',
   description:
-    'A tactical, esports HUD: clean beveled corner modules plus a slim objective bar that fills with hype and tints to the current faction leader.',
+    'A tactical esports HUD: beveled corner modules plus a slim objective bar that fills with hype and tints to the current faction leader.',
 
   defaultConfig: {
     // --- core ---
@@ -40,13 +36,19 @@ export const meta = {
     cornerArt_scalePct: 0.22,     // relative to min(W,H)
     cornerArt_insetPct: 0.020,    // inset from edges
 
-    // Corner glow underlay (tinted by faction color)
+    // Corner glow underlay (tinted by faction color) — keeps white bevel clean
     cornerGlow_enabled: 'yes',
     cornerGlow_strength: 0.55,    // 0..1
     cornerGlow_blurMax: 34,       // px
-    cornerGlow_alpha: 0.22,       // silhouette alpha (kept subtle)
-    cornerGlow_insetPx: 10,       // pull glow inward (avoids edge spill)
-    cornerGlow_pulse: 0.18,       // 0..0.5 (tiny breathing)
+    cornerGlow_alpha: 0.22,       // silhouette alpha
+    cornerGlow_insetPx: 10,       // pull glow inward to avoid edge spill
+    cornerGlow_pulse: 0.18,       // tiny breathing
+
+    // --- inner channel tint (auto mask from PNG dark pixels) ---
+    cornerChannelTint_enabled: 'yes',
+    cornerChannelTint_threshold: 165, // 0..255 (higher = more pixels considered “dark”)
+    cornerChannelTint_alpha: 0.55,    // 0..1
+    cornerChannelTint_composite: 'lighter', // lighter | source-over
 
     // --- objective bar ---
     bar_enabled: 'yes',
@@ -78,7 +80,7 @@ export const meta = {
     eventBoost: 1.0,
     spikeSensitivity: 1.0,
 
-    // --- demo (optional; helpful in dashboard preview) ---
+    // --- demo (for dashboard preview if meters not flowing yet) ---
     demo_enabled: 'yes',
     demo_noDataMs: 1500,
     demo_cycleSeconds: 10,
@@ -103,6 +105,10 @@ export const meta = {
 
     { key: 'cornerGlow_enabled', label: 'Corner Glow', type: 'select', options: ['yes', 'no'], default: 'yes' },
     { key: 'cornerGlow_strength', label: 'Corner Glow Strength', type: 'range', min: 0, max: 1, step: 0.05, default: 0.55 },
+
+    { key: 'cornerChannelTint_enabled', label: 'Channel Tint', type: 'select', options: ['yes', 'no'], default: 'yes' },
+    { key: 'cornerChannelTint_threshold', label: 'Channel Tint Threshold', type: 'range', min: 90, max: 210, step: 5, default: 165 },
+    { key: 'cornerChannelTint_alpha', label: 'Channel Tint Alpha', type: 'range', min: 0, max: 1, step: 0.05, default: 0.55 },
 
     { key: 'bar_enabled', label: 'Objective Bar', type: 'select', options: ['yes', 'no'], default: 'yes' },
     { key: 'bar_position', label: 'Bar Position', type: 'select', options: ['top', 'bottom'], default: 'top' },
@@ -203,6 +209,41 @@ function loadImage(src) {
   });
 }
 
+// Build an alpha-only mask where “dark pixels” become opaque.
+// This extracts the recessed channel/inset without requiring a separate PNG export.
+function buildDarkMask(img, threshold /* 0..255 */) {
+  const th = clamp(threshold, 0, 255) | 0;
+
+  const c = document.createElement('canvas');
+  c.width = img.width;
+  c.height = img.height;
+  const g = c.getContext('2d', { willReadFrequently: true });
+  g.drawImage(img, 0, 0);
+
+  const im = g.getImageData(0, 0, c.width, c.height);
+  const d = im.data;
+
+  for (let i = 0; i < d.length; i += 4) {
+    const a = d[i + 3];
+    if (a === 0) { d[i + 3] = 0; continue; }
+
+    // perceived brightness (0..255)
+    const br = (0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2]);
+
+    // keep only “dark” areas
+    const keep = br < th ? 255 : 0;
+
+    // write white with alpha mask
+    d[i] = 255;
+    d[i + 1] = 255;
+    d[i + 2] = 255;
+    d[i + 3] = keep;
+  }
+
+  g.putImageData(im, 0, 0);
+  return c;
+}
+
 function mixWeightedRgb(colors, weights) {
   let sum = 0, r = 0, g = 0, b = 0;
   for (let i = 0; i < colors.length; i++) {
@@ -248,8 +289,15 @@ export function init({ root, config, api }) {
   let spikeVel = 0;
   let spikeEnergy = 0;
 
-  // corner art
-  const corner = { ready: false, tl: null, tr: null, bl: null, br: null };
+  // track active factions (for pips)
+  let latestActiveCount = 3;
+
+  // corner art + masks
+  const corner = {
+    ready: false,
+    tl: null, tr: null, bl: null, br: null,
+    maskTL: null, maskTR: null, maskBL: null, maskBR: null
+  };
 
   // loop control
   let raf = 0;
@@ -277,6 +325,7 @@ export function init({ root, config, api }) {
     }
 
     total = clamp(total, 0, maxClamp);
+
     let h = 1 - Math.exp(-total / k);
     h = clamp01(h);
 
@@ -294,6 +343,7 @@ export function init({ root, config, api }) {
     const res = computeFromSnap(snap || { factions: [] });
     hTarget = res.h;
     accentTarget = res.rgb;
+    latestActiveCount = clamp(res.activeCount || 3, 2, 6) | 0;
 
     const d = Math.abs(res.total - lastTotal);
     lastTotal = res.total;
@@ -314,11 +364,21 @@ export function init({ root, config, api }) {
         loadImage(`${base}/cornerBL@2x.png`),
         loadImage(`${base}/cornerBR@2x.png`)
       ]);
+
       corner.tl = tl; corner.tr = tr; corner.bl = bl; corner.br = br;
+
+      // build masks for auto channel tint
+      if (yes(cfg.cornerChannelTint_enabled)) {
+        const th = clamp(cfg.cornerChannelTint_threshold, 0, 255);
+        corner.maskTL = buildDarkMask(tl, th);
+        corner.maskTR = buildDarkMask(tr, th);
+        corner.maskBL = buildDarkMask(bl, th);
+        corner.maskBR = buildDarkMask(br, th);
+      }
+
       corner.ready = true;
     } catch (e) {
       corner.ready = false;
-      // keep the overlay functional even if art fails
       console.warn('[controlPoint] corner art failed to load:', e);
     }
   }
@@ -342,12 +402,15 @@ export function init({ root, config, api }) {
     if (!stale) return;
 
     const demoCount = clamp(cfg.demo_factions, 2, 4) | 0;
+    latestActiveCount = clamp(demoCount, 2, 6) | 0;
+
     const colors = parseDemoColors(cfg.demo_colors).map(hexToRgb);
     const leaderIdx = clamp(cfg.demo_leaderIndex, 0, demoCount - 1) | 0;
 
     const cycle = clamp(cfg.demo_cycleSeconds, 4, 60);
     const phase = (nowMs / 1000) % cycle;
     const half = cycle / 2;
+
     let t = phase < half ? (phase / half) : ((phase - half) / half);
     const isMax = phase >= half;
     t = t * t * (3 - 2 * t);
@@ -356,7 +419,6 @@ export function init({ root, config, api }) {
     const high = clamp(cfg.demo_highMeter, low, cfg.maxTotalClamp);
     const meterVal = isMax ? lerp(low, high, t) : lerp(high, low, t);
 
-    // build weights
     const weights = [];
     for (let i = 0; i < demoCount; i++) {
       weights.push(meterVal * (0.92 + 0.16 * ((i + 1) / demoCount)));
@@ -365,15 +427,41 @@ export function init({ root, config, api }) {
     // total and hype
     let total = 0;
     for (const w of weights) total += w;
+
     const k = clamp(cfg.hypeK, 40, 600);
     hTarget = clamp01(1 - Math.exp(-total / k));
 
-    // choose leader color for winner mode
     if (cfg.mixMode === 'winner') accentTarget = colors[leaderIdx] || colors[0];
     else accentTarget = mixWeightedRgb(colors.slice(0, demoCount), weights);
 
-    // nudge spikes a bit so demo feels alive
+    // tiny motion bump
     spikeVel += 0.0025;
+  }
+
+  function drawTintedChannel(maskCanvas, px, py, w, h, nowMs) {
+    if (!yes(cfg.cornerChannelTint_enabled)) return;
+    if (!maskCanvas) return;
+
+    const alphaBase = clamp01(cfg.cornerChannelTint_alpha);
+    if (alphaBase <= 0) return;
+
+    // keep it “controlled”: a little stronger at higher hype + tiny pulse
+    const pulse = (Math.sin((nowMs / 1000) * 1.7) * 0.5 + 0.5);
+    const a = alphaBase * (0.20 + 0.80 * hSmooth) * (0.92 + 0.08 * pulse);
+
+    ctx.save();
+    ctx.globalAlpha = a;
+    ctx.globalCompositeOperation = (cfg.cornerChannelTint_composite === 'source-over') ? 'source-over' : 'lighter';
+
+    // draw mask (white alpha areas)
+    ctx.drawImage(maskCanvas, px, py, w, h);
+
+    // fill color only where mask exists
+    ctx.globalCompositeOperation = 'source-in';
+    ctx.fillStyle = `rgba(${accentSmooth.r | 0},${accentSmooth.g | 0},${accentSmooth.b | 0},1)`;
+    ctx.fillRect(px, py, w, h);
+
+    ctx.restore();
   }
 
   function drawCornerArt(nowMs) {
@@ -395,7 +483,7 @@ export function init({ root, config, api }) {
     const pulse = (Math.sin((nowMs / 1000) * 1.7) * 0.5 + 0.5);
     const pulseMul = 1 + glowPulse * (pulse * 2 - 1);
 
-    function drawOne(img, x, y, anchorX, anchorY) {
+    function drawOne(img, mask, x, y, anchorX, anchorY) {
       if (!img) return;
 
       const ar = img.width / img.height;
@@ -403,11 +491,10 @@ export function init({ root, config, api }) {
       if (ar >= 1) h = w / ar;
       else w = h * ar;
 
-      // anchor: 0 = left/top, 1 = right/bottom
       const px = x - w * anchorX;
       const py = y - h * anchorY;
 
-      // Glow underlay (draw a faint silhouette with shadow)
+      // Glow underlay silhouette
       if (glowOn) {
         const g = glowStrengthBase * (0.15 + 0.85 * hSmooth) * pulseMul;
         const blur = glowBlurMax * g;
@@ -419,7 +506,6 @@ export function init({ root, config, api }) {
           ctx.shadowColor = `rgba(${accentSmooth.r | 0},${accentSmooth.g | 0},${accentSmooth.b | 0},${0.60 * g})`;
           ctx.globalAlpha = glowAlpha * g;
 
-          // pull inward slightly so glow doesn't bleed off-screen
           const gx = px + glowInsetPx * (anchorX ? -1 : 1);
           const gy = py + glowInsetPx * (anchorY ? -1 : 1);
 
@@ -427,6 +513,9 @@ export function init({ root, config, api }) {
           ctx.restore();
         }
       }
+
+      // Inner channel tint (auto mask)
+      drawTintedChannel(mask, px, py, w, h, nowMs);
 
       // Main art
       ctx.save();
@@ -436,14 +525,10 @@ export function init({ root, config, api }) {
       ctx.restore();
     }
 
-    // TL (anchor left/top)
-    drawOne(corner.tl, inset, inset, 0, 0);
-    // TR (anchor right/top)
-    drawOne(corner.tr, W - inset, inset, 1, 0);
-    // BL (anchor left/bottom)
-    drawOne(corner.bl, inset, H - inset, 0, 1);
-    // BR (anchor right/bottom)
-    drawOne(corner.br, W - inset, H - inset, 1, 1);
+    drawOne(corner.tl, corner.maskTL, inset, inset, 0, 0);
+    drawOne(corner.tr, corner.maskTR, W - inset, inset, 1, 0);
+    drawOne(corner.bl, corner.maskBL, inset, H - inset, 0, 1);
+    drawOne(corner.br, corner.maskBR, W - inset, H - inset, 1, 1);
   }
 
   function drawObjectiveBar(nowMs) {
@@ -536,7 +621,7 @@ export function init({ root, config, api }) {
     if (yes(cfg.pips_enabled)) {
       const count = (cfg.pips_countMode === 'fixed')
         ? (clamp(cfg.pips_countFixed, 2, 6) | 0)
-        : clamp(lastTotal > 0 ? (latestActiveCount || 2) : 2, 2, 6) | 0;
+        : clamp(latestActiveCount || 2, 2, 6) | 0;
 
       const size = clamp(cfg.pips_sizePx, 3, 14);
       const gap = clamp(cfg.pips_gapPx, 6, 28);
@@ -582,9 +667,6 @@ export function init({ root, config, api }) {
 
     ctx.restore();
   }
-
-  // track active factions for pips (demo uses fake value)
-  let latestActiveCount = 3;
 
   function loop(nowMs) {
     raf = requestAnimationFrame(loop);

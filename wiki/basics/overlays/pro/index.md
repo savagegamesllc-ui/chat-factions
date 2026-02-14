@@ -4,6 +4,7 @@ These overlays are available on the PRO tier.
 
 - [Bubble Column](/wiki/basics/overlays/pro/bubbleColumn)
 - [Chat Perspective](/wiki/basics/overlays/pro/chatPerspective)
+- [Control Point](/wiki/basics/overlays/pro/controlPoint)
 - [Crownfall](/wiki/basics/overlays/pro/crownfall)
 - [Event Dance](/wiki/basics/overlays/pro/eventDance)
 - [Flagpole Pro](/wiki/basics/overlays/pro/flagpolePro)
