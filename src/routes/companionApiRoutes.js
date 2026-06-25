@@ -4,6 +4,9 @@
 const express = require('express');
 const { requireCompanionKey } = require('../middleware/requireCompanionKey');
 const { prisma } = require('../db/prisma');
+const { registerClient, unregisterClient } = require('../services/realtimeHub');
+const { getMetersSnapshot } = require('../services/meterService');
+const { getStatsSnapshot } = require('../services/statsService');
 
 function companionApiRoutes() {
   const router = express.Router();
@@ -122,6 +125,79 @@ function companionApiRoutes() {
     } catch (err) {
       res.status(500).json({ error: 'Failed to fetch meters.' });
     }
+  });
+
+  /**
+   * GET /api/v1/companion/events
+   * Server-Sent Events stream. Sends a full snapshot on connect, then forwards
+   * all real-time broadcasts (meters, stats, session, voting) as they happen.
+   * Uses the same realtimeHub as the overlay SSE — no extra broadcast calls needed.
+   *
+   * Event types the companion app will receive:
+   *   snapshot  — fired once on connect: { session, meters, stats }
+   *   meters    — faction meter values changed
+   *   stats     — streamer stats changed (latest follower, sub, etc.)
+   *   session   — session started or ended
+   *   voting    — voting open/closed state changed
+   *   ping      — keepalive heartbeat every 25 s
+   */
+  router.get('/api/v1/companion/events', async (req, res) => {
+    const streamerId = req.companionStreamer.id;
+    const connId = `companion:${streamerId}:${Date.now().toString(36)}`;
+
+    res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+    if (typeof res.flushHeaders === 'function') res.flushHeaders();
+
+    registerClient(streamerId, res);
+
+    // Send a full snapshot immediately so the companion app has current state
+    // without needing to call any REST endpoints first.
+    try {
+      const [session, metersSnap, statsSnap] = await Promise.all([
+        prisma.streamSession.findFirst({
+          where: { streamerId, endedAt: null },
+          orderBy: { startedAt: 'desc' },
+          select: {
+            id: true,
+            startedAt: true,
+            title: true,
+            votingOpen: true,
+            votingChangedAt: true,
+            lastDecayAt: true
+          }
+        }),
+        getMetersSnapshot(streamerId),
+        getStatsSnapshot(streamerId)
+      ]);
+
+      res.write(`event: snapshot\n`);
+      res.write(`data: ${JSON.stringify({
+        session: session || null,
+        meters: metersSnap ?? {},
+        stats: statsSnap ?? {}
+      })}\n\n`);
+    } catch (e) {
+      console.error('[companion-sse] snapshot failed', { connId, message: e?.message || String(e) });
+      res.write(`event: snapshot\n`);
+      res.write(`data: ${JSON.stringify({ session: null, meters: {}, stats: {} })}\n\n`);
+    }
+
+    // Keepalive ping every 25 s — matches the overlay SSE interval
+    const pingTimer = setInterval(() => {
+      try {
+        res.write(`event: ping\n`);
+        res.write(`data: {"t":${Date.now()}}\n\n`);
+      } catch (_) {}
+    }, 25_000);
+
+    req.on('close', () => {
+      clearInterval(pingTimer);
+      try { unregisterClient(streamerId, res); } catch (_) {}
+      try { res.end(); } catch (_) {}
+    });
   });
 
   return router;
