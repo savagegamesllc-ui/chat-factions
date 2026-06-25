@@ -79,6 +79,9 @@ model Streamer {
   eventApiKey String? @unique
   externalReceipts ExternalEventReceipt[]
 
+  // Companion app API key (PRO-only, hashed)
+  companionApiKey CompanionApiKey?
+
     // Per-streamer EventSub → hype mapping/policy
   eventConfig Json?
     // Listener persistence (chat listener process state)
@@ -447,4 +450,22 @@ model StreamerLatestActivity {
   latestTipCurrency String?
 
   updatedAt DateTime @updatedAt
+}
+
+//
+// ✅ Companion app API key (PRO-only, one per streamer, hashed at rest)
+//
+model CompanionApiKey {
+  id         String    @id @default(cuid())
+  streamerId String    @unique
+  keyHash    String    @unique
+  keyPrefix  String
+  label      String?
+  createdAt  DateTime  @default(now())
+  lastUsedAt DateTime?
+  revokedAt  DateTime?
+
+  streamer   Streamer  @relation(fields: [streamerId], references: [id], onDelete: Cascade)
+
+  @@index([keyHash])
 }

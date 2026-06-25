@@ -29,6 +29,8 @@ const { chatConfigRoutes } = require('./routes/chatConfigRoutes');
 const { eventKeyRoutes } = require('./routes/eventKeyRoutes');
 const { eventApiPageRoutes } = require('./routes/eventApiPageRoutes');
 const { ownerStreamersRoutes } = require('./routes/ownerStreamersRoutes');
+const { companionApiRoutes } = require('./routes/companionApiRoutes');
+const { companionKeyRoutes } = require('./routes/companionKeyRoutes');
 const { startDecayLoop } = require('./services/decayLoopService');
 
 const { wikiRoutes } = require('./routes/wikiRoutes');
@@ -170,6 +172,10 @@ app.use(chatConfigRoutes);
 app.use(eventKeyRoutes);
 app.use(eventApiPageRoutes);
 app.use(ownerStreamersRoutes);
+
+// Companion app
+app.use(companionApiRoutes);
+app.use(companionKeyRoutes);
 
 // 404
 app.use((req, res) => {

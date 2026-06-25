@@ -1,0 +1,223 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title><%= title %></title>
+    <link rel="stylesheet" href="/public/css/app.css" />
+    <style>
+      .key-reveal-modal-backdrop {
+        display: none;
+        position: fixed;
+        inset: 0;
+        background: rgba(0,0,0,0.65);
+        z-index: 1000;
+        align-items: center;
+        justify-content: center;
+      }
+      .key-reveal-modal-backdrop.open {
+        display: flex;
+      }
+      .key-reveal-modal {
+        background: #1a1a2e;
+        border: 1px solid rgba(255,255,255,0.12);
+        border-radius: 12px;
+        padding: 28px 24px;
+        max-width: 560px;
+        width: 95%;
+        box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+      }
+      .key-reveal-modal h3 {
+        margin: 0 0 6px;
+        font-size: 1.1rem;
+      }
+      .key-reveal-warning {
+        background: rgba(255,180,0,0.12);
+        border: 1px solid rgba(255,180,0,0.3);
+        border-radius: 6px;
+        padding: 10px 14px;
+        font-size: 0.82rem;
+        color: #ffd060;
+        margin-bottom: 16px;
+        line-height: 1.5;
+      }
+      .key-reveal-value {
+        font-family: monospace;
+        font-size: 0.85rem;
+        background: rgba(0,0,0,0.35);
+        border: 1px solid rgba(255,255,255,0.1);
+        border-radius: 6px;
+        padding: 12px;
+        word-break: break-all;
+        margin-bottom: 14px;
+        user-select: all;
+        line-height: 1.5;
+      }
+      .key-reveal-actions {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+      .pro-gate {
+        background: rgba(255,255,255,0.04);
+        border: 1px dashed rgba(255,255,255,0.15);
+        border-radius: 10px;
+        padding: 32px 24px;
+        text-align: center;
+      }
+      .pro-gate-icon {
+        font-size: 2rem;
+        margin-bottom: 10px;
+      }
+      .pro-gate h3 {
+        margin: 0 0 8px;
+        font-size: 1.05rem;
+      }
+      .pro-gate p {
+        color: rgba(255,255,255,0.5);
+        font-size: 0.85rem;
+        margin: 0 0 18px;
+        line-height: 1.5;
+      }
+      .key-status-row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
+        margin-bottom: 8px;
+      }
+      .badge-active {
+        background: rgba(120,200,100,0.18);
+        color: #7ecf6e;
+        border: 1px solid rgba(120,200,100,0.3);
+        border-radius: 4px;
+        padding: 2px 8px;
+        font-size: 0.72rem;
+        font-weight: 700;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+      }
+      .badge-revoked {
+        background: rgba(220,80,80,0.18);
+        color: #e07070;
+        border: 1px solid rgba(220,80,80,0.3);
+        border-radius: 4px;
+        padding: 2px 8px;
+        font-size: 0.72rem;
+        font-weight: 700;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+      }
+      .meta-row {
+        font-size: 0.78rem;
+        color: rgba(255,255,255,0.45);
+        line-height: 1.6;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+
+      <%- include('../../partials/streamerHeader', {
+        pageTitle: 'Companion App',
+        pageSub: 'API key for the Chat Factions companion app',
+        activeTab: 'companionKey'
+      }) %>
+
+      <div id="status" class="notice" style="display:none;"></div>
+
+      <% if (!isPro) { %>
+        <!-- FREE users: locked section -->
+        <div class="card" style="padding: 28px;">
+          <div class="pro-gate">
+            <div class="pro-gate-icon">🔒</div>
+            <h3>PRO feature</h3>
+            <p>
+              The companion app API key is available on the PRO plan.<br>
+              Upgrade to generate a key and connect the companion app.
+            </p>
+            <a class="btn primary" href="/admin/billing">Upgrade to PRO</a>
+          </div>
+        </div>
+      <% } else { %>
+        <!-- PRO users: key management -->
+        <div class="grid two" style="align-items:start;">
+
+          <div class="card">
+            <div class="card-title">
+              <h2>Your companion key</h2>
+              <div class="hint">PRO</div>
+            </div>
+
+            <!-- Loading state -->
+            <div id="keyLoading" class="muted small">Loading…</div>
+
+            <!-- No key yet -->
+            <div id="keyNone" style="display:none;">
+              <div class="muted small" style="margin-bottom:14px;">
+                No key has been generated yet.
+              </div>
+              <button class="btn primary" id="btnGenerate">Generate key</button>
+            </div>
+
+            <!-- Key exists -->
+            <div id="keyExists" style="display:none;">
+              <div class="key-status-row">
+                <span class="mono" id="keyPrefixDisplay" style="font-size:0.9rem;"></span>
+                <span id="keyBadge"></span>
+              </div>
+              <div class="meta-row" id="keyMeta"></div>
+
+              <div style="margin-top:16px; display:flex; gap:10px; flex-wrap:wrap;" id="keyActions">
+                <button class="btn" id="btnRotate" style="display:none;">Rotate key</button>
+                <button class="btn danger" id="btnRevoke" style="display:none;">Revoke</button>
+                <button class="btn primary" id="btnGenerate2" style="display:none;">Generate new key</button>
+              </div>
+
+              <div class="small muted" style="margin-top:12px; line-height:1.5;" id="keyHint"></div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-title">
+              <h2>How to use</h2>
+              <div class="hint">Bearer token</div>
+            </div>
+
+            <div class="small muted" style="margin-bottom:10px; line-height:1.5;">
+              Pass your key in the <span class="mono">Authorization</span> header with every companion app request:
+            </div>
+
+            <pre class="code" style="font-size:0.78rem; line-height:1.6;">Authorization: Bearer cfk_&lt;your-key&gt;
+
+GET /api/v1/companion/me
+GET /api/v1/companion/session
+GET /api/v1/companion/factions
+GET /api/v1/companion/meters</pre>
+
+            <div class="small muted" style="margin-top:12px; line-height:1.5;">
+              Keys are hashed at rest. If you lose your key, rotate to generate a new one — the old key is immediately revoked.
+            </div>
+          </div>
+        </div>
+      <% } %>
+
+      <!-- One-time key reveal modal -->
+      <div class="key-reveal-modal-backdrop" id="revealModal">
+        <div class="key-reveal-modal">
+          <h3 id="revealTitle">Your companion app key</h3>
+          <div class="key-reveal-warning">
+            ⚠️ This key will only be shown once. Copy it now and store it somewhere safe — you won't be able to see it again after closing this dialog.
+          </div>
+          <div class="key-reveal-value" id="revealKeyValue"></div>
+          <div class="key-reveal-actions">
+            <button class="btn primary" id="btnRevealCopy">Copy key</button>
+            <button class="btn" id="btnRevealClose">I've copied it, close</button>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <script src="/public/js/streamer/companionKey.js"></script>
+  </body>
+</html>

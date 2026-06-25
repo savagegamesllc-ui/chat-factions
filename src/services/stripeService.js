@@ -170,6 +170,7 @@ function constructStripeEvent(rawBody, signatureHeader) {
 }
 
 module.exports = {
+  hasProAccess,
   getBillingStatus,
   createProCheckoutSession,
   createCustomerPortalUrl,
