@@ -32,6 +32,8 @@ const { ownerStreamersRoutes } = require('./routes/ownerStreamersRoutes');
 const { companionApiRoutes } = require('./routes/companionApiRoutes');
 const { companionKeyRoutes } = require('./routes/companionKeyRoutes');
 const { startDecayLoop } = require('./services/decayLoopService');
+const { startChatForStreamer } = require('./services/twitchChatService');
+const { prisma } = require('./db/prisma');
 
 const { wikiRoutes } = require('./routes/wikiRoutes');
 
@@ -187,4 +189,29 @@ app.use(errorHandler);
 
 app.listen(config.port, () => {
   console.log(`[server] listening on ${config.appBaseUrl}`);
+
+  (async () => {
+    try {
+      const streamers = await prisma.streamer.findMany({
+        where: {
+          twitchAccessToken: { not: null },
+          login: { not: null },
+        },
+        select: { id: true, login: true },
+      });
+
+      console.log(`[chat autostart] found ${streamers.length} streamer(s) with Twitch token`);
+
+      for (const s of streamers) {
+        try {
+          await startChatForStreamer(s.id);
+          console.log(`[chat autostart] started for ${s.login} (${s.id})`);
+        } catch (err) {
+          console.error(`[chat autostart] failed for ${s.login} (${s.id}):`, err?.message || err);
+        }
+      }
+    } catch (err) {
+      console.error('[chat autostart] DB query failed:', err?.message || err);
+    }
+  })();
 });
